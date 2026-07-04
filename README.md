@@ -1,31 +1,29 @@
 
----
-
 # VisionLink-AI-Glasses
 
 An offline multimodal generative AI assistive system based on Gemma 4 for visually impaired individuals.
 
-> 🎬 **最新 Demo 演示视频**：[点击观看 Bilibili 演示视频](https://www.google.com/search?q=https://www.bilibili.com/video/BV1FmJJ6rEsn/)
+> 🎬 **最新 Demo 演示视频**：[点击观看 Bilibili 演示视频](https://www.bilibili.com/video/BV1FmJJ6rEsn/)
 
 ---
 
 ## 目录
 
-* [项目简介](https://www.google.com/search?q=%23%E9%A1%B9%E7%9B%AE%E7%AE%80%E4%BB%8B)
-* [核心维度与亮点](https://www.google.com/search?q=%23%E6%A0%B8%E5%BF%83%E7%BB%B4%E5%BA%A6%E4%B8%8E%E4%BA%AE%E7%82%B9)
-* [功能模式](https://www.google.com/search?q=%23%E5%8A%9F%E8%83%BD%E6%A8%A1%E5%BC%8F)
-* [软硬件架构与实物清单](https://www.google.com/search?q=%23%E8%BD%AF%E7%A1%AC%E4%BB%B6%E6%9E%B6%E6%9E%84%E4%B8%8E%E5%AE%9E%E7%89%A9%E6%B8%85%E5%8D%95)
-* [环境依赖与部署](https://www.google.com/search?q=%23%E7%8E%AF%E5%A2%83%E4%BE%9D%E8%B5%96%E4%B8%8E%E9%83%A8%E7%BD%B2)
-* [无障碍交互说明](https://www.google.com/search?q=%23%E6%97%A0%E9%9A%9C%E7%A2%8D%E4%BA%A4%E4%BA%92%E8%AF%B4%E6%98%8E)
-* [快速启动](https://www.google.com/search?q=%23%E5%BF%AB%E9%80%9F%E5%90%AF%E5%8A%A8)
-* [产品 Roadmap](https://www.google.com/search?q=%23%E4%BA%A7%E5%93%81-roadmap)
-* [开源协议与致谢](https://www.google.com/search?q=%23%E5%BC%80%E6%BA%90%E5%8D%8F%E8%AE%AE%E4%B8%8E%E8%87%B4%E8%B0%A2)
+* [项目简介](#项目简介)
+* [核心维度与亮点](#核心维度与亮点)
+* [功能模式](#功能模式)
+* [软硬件架构与实物清单](#软硬件架构与实物清单)
+* [项目结构](#项目结构)
+* [环境依赖与部署](#环境依赖与部署)
+* [快速启动](#快速启动)
+* [产品 Roadmap](#产品-roadmap)
+* [开源协议与致谢](#开源协议与致谢)
 
 ---
 
 ## 项目简介
 
-**VisionLink-AI-Glasses** 是一款专为视障人士及特定行业设计的**全离线端侧具身智能视觉代偿系统**。项目基于边缘端多模态大模型（VLM）与“边云结合”分布式架构，通过高集成度的分体式可穿戴设计，在完全断网环境下实现高实时、绝对隐私、零运营成本的视觉辅助。
+**VisionLink-AI-Glasses** 是一款专为视障人士及特定行业设计的**全离线端侧具身智能视觉代偿系统**。项目基于边缘端多模态大模型（VLM）与"边云结合"分布式架构，通过高集成度的分体式可穿戴设计，在完全断网环境下实现高实时、绝对隐私、零运营成本的视觉辅助。
 
 项目依托轻量化多模态模型实现端侧高效推理，面向视障人群打造普惠无障碍出行辅助产品，深度契合 **Google Hackathon 赛道 B: Multimodal（多模态赛道）** 的评审方向。
 
@@ -33,10 +31,10 @@ An offline multimodal generative AI assistive system based on Gemma 4 for visual
 
 ## 核心维度与亮点
 
-* **🧠 认知级环境推理**：打破传统传感器或 YOLO 等小模型的局限。本地部署 Gemma 4 多模态大模型，不仅能“看到”障碍物，还能理解复杂的空间因果关系（例如：不是生硬地提示“自行车”，而是提示“一辆共享单车倒在了盲道上，请向左绕行”）。
+* **🧠 认知级环境推理**：打破传统传感器或 YOLO 等小模型的局限。本地部署 Gemma 4 多模态大模型，不仅能"看到"障碍物，还能理解复杂的空间因果关系（例如：不是生硬地提示"自行车"，而是提示"一辆共享单车倒在了盲道上，请向左绕行"）。
 * **🔒 绝对隐私，零运营成本**：响应视障用户对个人隐私的极高要求，核心业务 100% 边缘端断网运行，物理级锁死隐私，同时实现企业零算力运营成本。
 * **⚡ 极致的边缘端量化加速**：针对 **Jetson Orin Nano (8GB)** 显存进行深度量化调优，将大模型的慢思考周期控制在秒级，并前置快通道传感器融合算法，兼顾空间全局规划与毫秒级紧急避障。
-* **🎒 机能风分体式工程落地**：拒绝“头重脚轻”的反人类设计。头部（眼镜端）仅保留微型摄像头与不堵塞耳道的耳夹式耳机（重量 < 30g），将主板、风扇、PD 电池组下沉至身体承重仓，打造高辨识度的赛博机能风准商业样机（MVP）。
+* **🎒 机能风分体式工程落地**：拒绝"头重脚轻"的反人类设计。头部（眼镜端）仅保留微型摄像头与不堵塞耳道的耳夹式耳机（重量 < 30g），将主板、风扇、PD 电池组下沉至身体承重仓，打造高辨识度的赛博机能风准商业样机（MVP）。
 
 ---
 
@@ -54,40 +52,76 @@ An offline multimodal generative AI assistive system based on Gemma 4 for visual
 
 项目采用从 **PC原型验证** 到 **边缘端一体化样机** 的完整全栈开发路径。
 
-### 1. 软件架构：“保命在本地，军师在云端”
+### 1. 软件架构："保命在本地，军师在云端"
 
 * **边缘大脑（Gemma 4 本地运行）**：负责高频、高实时的避障与日常隐私场景，物理隔离，断网可用。
 * **云端大脑（联网大模型）**：负责低频、高消耗的深度长文本阅读或全网信息检索，作为本地大脑的后备援军。
 
 ### 2. 硬件实物选型清单
 
-### 2. 硬件实物选型清单
-
 | 硬件模块 | 实物图参考 | 规格与作用说明 |
 | :--- | :---: | :--- |
-| **边缘计算大脑** | ![Jetson Orin Nano 8GB](images/1%20(3).jpg)<br>`1 (3).jpg` | **NVIDIA Jetson Orin Nano Developer Kit (8GB)**<br>提供高达 40 TOPS 的 AI 算力，搭配原厂主动散热风扇与散热片，负责本地高效、低功耗闭环运行 Gemma 4 边缘多模态模型。 |
-| **视觉采集模块** | ![微型高清摄像头](images/1%20(2).jpg)<br>`1 (2).jpg` | **微型高清摄像头组件**<br>极其轻量化，集成于眼镜前端，负责实时捕捉盲人第一视角的高清画面，作为本地多模态大模型的图像输入 Token。 |
-| **语音音频输出** | ![耳夹式微型耳机](images/1%20(4).jpg)<br>`1 (4).jpg` | **耳夹式不堵塞耳道微型耳机**<br>通过音频或 USB 接口连接，用于私密播报场景描述或路线避险规划。开放耳道的设计确保视障者在听取 AI 指引的同时，完全不影响对外界环境音的感知。 |
-| **能源动力系统** | ![高功率移动电源](images/1%20(1).jpg)<br>`1 (1).jpg` | **大功率 PD 快充移动电源 (20000mAh / 165W)**<br>采用分体式身体承重设计，为边缘计算核心提供长效续航，完美满足大模型满载运行时 10W-15W 黄金功耗的供电需求。 |
-| **电力诱骗线缆** | ![DC诱骗线](images/1%20(6).jpg)<br>`1 (6).jpg` | **Type-C 转 DC 专用高电流供电线**<br>内置移动端 PD 快充协议诱骗芯片，将充电宝输出的高功率电流安全、稳定地转化为 Jetson 适用的电压输入，保障系统户外移动运行的稳定性。 |
+| **边缘计算大脑** | ![Jetson Orin Nano 8GB](images/1%20(3).jpg) | **NVIDIA Jetson Orin Nano Developer Kit (8GB)** 提供高达 40 TOPS 的 AI 算力。 |
+| **视觉采集模块** | ![微型高清摄像头](images/1%20(2).jpg) | **微型高清摄像头组件** 极其轻量化，集成于眼镜前端。 |
+| **语音音频输出** | ![耳夹式微型耳机](images/1%20(4).jpg) | **耳夹式不堵塞耳道微型耳机** 私密播报，不影响环境音感知。 |
+| **能源动力系统** | ![高功率移动电源](images/1%20(1).jpg) | **大功率 PD 快充移动电源 (20000mAh / 165W)** 身体承重设计。 |
+| **电力诱骗线缆** | ![DC诱骗线](images/1%20(6).jpg) | **Type-C 转 DC 专用高电流供电线** 内置 PD 快充协议诱骗芯片。 |
+
+---
+
+## 项目结构
+
+```
+VisionLink/
+├── src/                    # 核心源码（跨平台）
+│   ├── platform.py         # 平台检测与环境适配
+│   ├── config.py           # 统一配置中心
+│   ├── camera.py           # 摄像头管理（DSHOW/V4L2）
+│   ├── inference.py        # Ollama 多模态推理
+│   ├── tts.py              # TTS 语音合成（SAPI5/espeak）
+│   ├── ui.py               # UI 绘制（自动适配无头模式）
+│   ├── agent.py            # 自动模式任务调度
+│   └── prompts.py          # Prompt 模板库
+├── apps/                   # 应用入口
+│   ├── desktop.py          # Windows 桌面全功能版
+│   └── jetson.py           # Jetson Orin Nano 边缘部署版
+├── scripts/                # 测试与工具脚本
+├── archive/                # 历史迭代版本
+├── assets/                 # 静态资源（字体/音频/图片）
+├── docs/                   # 文档
+├── requirements.txt        # 通用依赖
+└── requirements-jetson.txt # Jetson 专用依赖
+```
+
+### 平台差异
+
+| 特性 | Windows | Jetson |
+|------|---------|--------|
+| 模型 | gemma4:e2b | gemma4:e2b-q4_K_S |
+| AI 分辨率 | 448px | 288px |
+| 摄像头 | DSHOW, ID=1 | V4L2, 自动遍历 |
+| TTS | PowerShell SAPI5 | espeak |
+| 蜂鸣 | winsound.Beep | speaker-test |
+| UI | 完整面板 | 自动适配无头 |
+
 ---
 
 ## 环境依赖与部署
 
-### 1. 基础环境安装
-
-确保你的开发板或 PC 环境中已配置好 Python 3.x，并安装以下依赖：
+### 1. Windows 桌面版
 
 ```bash
-pip install opencv-python ollama pillow
-
+pip install -r requirements.txt
+ollama pull gemma4:e2b
+python apps/desktop.py
 ```
 
-### 2. 本地拉取调优后的多模态模型
+### 2. Jetson Orin Nano 边缘版
 
 ```bash
-ollama pull gemma4:e2b
-
+pip install -r requirements-jetson.txt
+ollama pull gemma4:e2b-q4_K_S
+python apps/jetson.py
 ```
 
 > 💡 **提示**：仅首次拉取模型需要连接网络。后续运行过程中，所有的多模态推理与语音合成均 **100% 在本地离线完成**。
@@ -96,44 +130,28 @@ ollama pull gemma4:e2b
 
 ## 无障碍交互说明
 
-在样机开发阶段，系统通过按键/键盘映射模拟盲人交互，未来将直接移植至智能眼镜的物理按键：
-
 | 触发按键 | 对应功能模式 |
 | --- | --- |
 | **按键 1** | 切换至 【避障预警模式】 |
 | **按键 2** | 切换至 【文字朗读模式】 |
-| **按键 3** | 切换至 【环境场景描述模式】 |
-| **空格键 (Space)** | **触发交互**：摄像头拍照 $\rightarrow$ 本地大模型多模态识别 $\rightarrow$ 耳机语音播报结果 |
+| **按键 3** | 切换至 【场景描述模式】 |
+| **空格键 (Space)** | **触发交互**：摄像头拍照 → 本地大模型多模态识别 → 耳机语音播报 |
 | **ESC 键** | 退出并安全关闭程序 |
-
----
-
-## 快速启动
-
-1. 将 **微型 USB 摄像头** 接入 Jetson Orin Nano / PC 设备。
-2. 将 **耳夹式耳机** 接入设备的音频/USB输出端口。
-3. 通过终端进入项目源码目录，执行启动脚本：
-```bash
-python main.py
-
-```
-
-
-4. 根据交互说明，切换对应模式并按下空格键，即可在耳机中听到全离线的端侧 AI 环境指引。
 
 ---
 
 ## 产品 Roadmap（迭代规划）
 
-* [x] **Phase 1 (PC Demo)**：PC端基本流水线跑通，完成三大核心多模态功能调试，录制第一版演示视频。
+* [x] **Phase 1 (PC Demo)**：PC端基本流水线跑通，完成三大核心多模态功能调试。
 * [x] **Phase 2 (边缘移植)**：将代码成功移植至 **Jetson Orin Nano (8GB)**，通过 INT4/INT8 量化降低内存占用。
-* [ ] **Phase 3 (硬件联调)**：深度适配智能眼镜的原生摄像头与骨传导耳麦接口，实现真正意义的第一视角具身感知。
-* [ ] **Phase 4 (工程封装)**：完成 3D 打印尼龙人体工学挂脖/背包的打样，将电池与主板完美隐藏，推出商业级 MVP 样机。
-* [ ] **Phase 5 (场景外溢)**：横向跨界，将端侧第一视角多模态能力平移至无网工业巡检机器人、失智老人健康看护等垂直百亿级蓝海市场。
+* [x] **Phase 3 (工程化重构)**：模块化代码架构，双平台统一接口，无头模式支持。
+* [ ] **Phase 4 (硬件联调)**：深度适配智能眼镜的原生摄像头与骨传导耳麦接口。
+* [ ] **Phase 5 (工程封装)**：完成 3D 打印尼龙人体工学挂脖/背包的打样，推出商业级 MVP 样机。
+* [ ] **Phase 6 (场景外溢)**：横向跨界，平移至无网工业巡检机器人、失智老人健康看护等垂直市场。
 
 ---
 
 ## 开源协议与致谢
 
 * 本项目基于 **MIT License** 开源协议，允许商用、二次修改与分发。
-* 特别感谢 **Google Hackathon** 提供的技术展示舞台。欢迎所有开发者提交 PR 或在 Issue 中交流边缘侧大模型部署心得！
+* 特别感谢 **Google Hackathon** 提供的技术展示舞台。
