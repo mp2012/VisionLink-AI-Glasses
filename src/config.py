@@ -5,7 +5,7 @@
 from .platform import IS_JETSON, IS_WINDOWS
 
 # ==================== 模型配置 ====================
-MODEL_NAME = "gemma4:e2b-q4_K_S" if IS_JETSON else "gemma4:e2b-it-qat"
+MODEL_NAME = "gemma4:e2b-it-qat" if IS_JETSON else "gemma4:e2b-it-qat"
 
 # ==================== 摄像头配置 ====================
 CAMERA_CONFIG = {
@@ -31,8 +31,8 @@ INFER_OPTIONS = {
     "timeout": TIMEOUT_INFER * 1000,
 }
 if IS_JETSON:
-    INFER_OPTIONS["num_ctx"] = 512
-    INFER_OPTIONS["num_predict"] = 256
+    INFER_OPTIONS["num_ctx"] = 256
+    INFER_OPTIONS["num_predict"] = 128
 
 # ==================== UI 配置 ====================
 UI_PANEL_WIDTH = 320

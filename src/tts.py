@@ -1,7 +1,7 @@
 """
 TTS 语音合成模块
 Windows: PowerShell SAPI5（异步线程，可中断）
-Jetson: espeak + aplay（异步线程，可中断）
+Jetson: edge-tts + ffplay（微软神经网络语音，中文自然）
 统一接口：speak(text) / stop()
 """
 import os
@@ -13,6 +13,9 @@ import threading
 from .platform import IS_JETSON, IS_WINDOWS
 
 logger = logging.getLogger(__name__)
+
+# Jetson 音频设备: card 0 = USB Audio (AB13X, 耳麦/摄像头音频)
+JETSON_AUDIO_DEV = "plughw:0,0"
 
 
 class TTSEngine:
@@ -73,16 +76,35 @@ class TTSEngine:
 
     @staticmethod
     def _speak_jetson(text: str):
+        """使用 edge-tts 微软神经网络语音，中文自然流畅"""
         clean_text = text.replace("'", " ")
-        timestamp = time.strftime("%Y%m%d_%H%M%S_%f")
-        wav_path = f"audio_cache/voice_{timestamp}.wav"
-        os.makedirs("audio_cache", exist_ok=True)
-
+        # 生成临时 mp3 然后播放
+        tmp_path = f"/tmp/tts_{time.time_ns()}.mp3"
         cmd = (
-            f"espeak -v zh+f2 -s 140 --wav={wav_path} '{clean_text}' >/dev/null 2>&1;"
-            f"aplay -q {wav_path} >/dev/null 2>&1"
+            f"edge-tts --voice zh-CN-XiaoxiaoNeural --text '{clean_text}' "
+            f"--write-media {tmp_path} 2>/dev/null && "
+            f"ffplay -nodisp -autoexit -loglevel quiet {tmp_path} 2>/dev/null; "
+            f"rm -f {tmp_path}"
         )
         return subprocess.Popen(cmd, shell=True)
+
+    def play_effect(self, filepath: str):
+        """播放指定音效文件（异步）"""
+        if not os.path.exists(filepath):
+            logger.warning(f"音效文件不存在: {filepath}")
+            return
+        if IS_JETSON:
+            threading.Thread(
+                target=lambda: os.system(
+                    f"ffplay -nodisp -autoexit -loglevel quiet {filepath} 2>/dev/null"
+                ),
+                daemon=True
+            ).start()
+        elif IS_WINDOWS:
+            threading.Thread(
+                target=lambda: os.system(f'start /min wmplayer "{filepath}" 2>nul'),
+                daemon=True
+            ).start()
 
     def play_beep(self):
         """播放按键提示音"""
@@ -90,4 +112,14 @@ class TTSEngine:
             import winsound
             winsound.Beep(800, 80)
         elif IS_JETSON:
-            os.system("speaker-test -t sine -f 900 -l 0.06 >/dev/null 2>&1")
+            # 生成短促提示音：800Hz 正弦波，0.05秒
+            beep_path = "/tmp/beep.wav"
+            if not os.path.exists(beep_path):
+                os.system(
+                    f"sox -n -r 22050 -c 1 {beep_path} synth 0.05 sine 800 vol 0.3 2>/dev/null"
+                    f" || ffmpeg -f lavfi -i 'sine=frequency=800:duration=0.05' -ar 22050 -ac 1 {beep_path} -y 2>/dev/null"
+                )
+            threading.Thread(
+                target=lambda: os.system(f"aplay -D {JETSON_AUDIO_DEV} -q {beep_path} 2>/dev/null"),
+                daemon=True
+            ).start()

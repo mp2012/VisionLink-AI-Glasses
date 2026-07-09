@@ -60,7 +60,7 @@ class InferenceEngine:
                 options=INFER_OPTIONS,
             )
             result = resp["message"]["content"].strip()
-            logger.info(f"推理完成：{result[:80]}...")
+            logger.info(f"推理完成(长度={len(result)}): {repr(result[:120])}")
             return result
         except Exception as e:
             logger.error(f"推理异常：{e}")

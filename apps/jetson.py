@@ -10,6 +10,11 @@ import sys
 import time
 import logging
 import threading
+import select
+import termios
+import tty
+
+import cv2
 
 # 屏蔽 Qt 字体警告（Jetson 环境常见问题）
 os.environ.setdefault("QT_QPA_FONTDIR", "/usr/share/fonts/truetype/dejavu/")
@@ -20,6 +25,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.platform import IS_JETSON, HAS_DISPLAY
 from src.config import (
     CAMERA_CONFIG, STATE_IDLE, SNAPSHOT_DIR, INFER_LOG_DIR, AUDIO_CACHE_DIR,
+    MODEL_NAME,
 )
 from src.prompts import PROMPT_LIB
 from src.camera import CameraManager
@@ -50,9 +56,9 @@ camera = CameraManager()
 infer = InferenceEngine()
 tts = TTSEngine()
 ui = UIManager()
+ui.enable_gui = False  # 强制无头模式，纯终端交互
 
 current_mode = 1  # 默认障碍物检测
-scan_interval = 4  # 秒
 
 
 def save_snapshot(frame):
@@ -93,27 +99,41 @@ def run_inference(frame, mode_idx):
         tts.speak(result)
 
 
+def get_terminal_key():
+    """从终端非阻塞读取按键（不依赖 OpenCV 窗口焦点）"""
+    if select.select([sys.stdin], [], [], 0.02)[0]:
+        return sys.stdin.read(1)
+    return ""
+
+
 def main():
     global current_mode
 
     logger.info("=" * 50)
     logger.info(f"VisionLink Jetson 启动 | 无头模式: {not HAS_DISPLAY}")
-    logger.info(f"模型: {InferenceEngine.__module__}")
-    logger.info(f"扫描间隔: {scan_interval}s")
+    logger.info(f"模型: {MODEL_NAME}")
+    for i, name in enumerate(MODE_NAMES, 1):
+        logger.info(f"  模式{i}: {name}")
+    logger.info("触发方式: 空格键手动触发（终端键盘，无需窗口焦点）")
+    logger.info("操作: 空格=触发 | 1~5=切换模式 | S=停止语音 | Q=退出")
     logger.info(f"存储: {SNAPSHOT_DIR} | {INFER_LOG_DIR} | {AUDIO_CACHE_DIR}")
     logger.info("=" * 50)
-
-    tts.speak("系统启动完成，自动扫描模式")
 
     if not camera.open():
         logger.error("摄像头初始化失败")
         return
 
-    if HAS_DISPLAY:
-        win_name = "VisionLink Jetson"
-        ui.create_window(win_name, CAMERA_CONFIG["width"], CAMERA_CONFIG["height"])
+    tts.speak("项目启动")
 
-    last_scan = 0
+    # 设置终端为非规范模式（无需回车即可读取按键）
+    use_terminal = sys.stdin.isatty()
+    if use_terminal:
+        old_settings = termios.tcgetattr(sys.stdin)
+        tty.setcbreak(sys.stdin.fileno())
+        logger.info("终端键盘监听已启用")
+    else:
+        old_settings = None
+        logger.warning("stdin 不是终端，键盘输入不可用，仅支持 Ctrl+C 退出")
 
     try:
         while True:
@@ -122,47 +142,46 @@ def main():
                 time.sleep(0.05)
                 continue
 
-            now = time.time()
+            # 从终端读取按键（不依赖窗口焦点）
+            key = get_terminal_key() if use_terminal else ""
 
-            # 自动扫描
-            if now - last_scan >= scan_interval and not infer.is_busy:
-                last_scan = now
-                logger.info("自动扫描触发")
+            if not key:
+                continue
+
+            # 空格键：触发推理（播放拍照音效）
+            if key == " " and not infer.is_busy:
+                logger.info("空格触发推理")
+                tts.play_effect("assets/audio/pic.mp3")
                 threading.Thread(
                     target=run_inference,
                     args=(frame.copy(), current_mode),
                     daemon=True,
                 ).start()
+                continue
 
-            # UI 显示
-            if ui.enable_gui:
-                display = ui.draw_panel(frame)
-                ui.show(win_name, display)
-                key = cv2.waitKey(20) & 0xFF
+            # 1~5 切换模式
+            elif key in "12345":
+                tts.play_beep()
+                current_mode = int(key)
+                tts.speak(f"已切换至{MODE_NAMES[current_mode - 1]}")
+                continue
 
-                # 1~5 切换模式
-                if 49 <= key <= 53:
-                    tts.play_beep()
-                    current_mode = key - 48
-                    tts.speak(f"已切换至{MODE_NAMES[current_mode - 1]}")
-                    continue
+            # S/s 停止语音
+            elif key.lower() == "s":
+                tts.play_beep()
+                tts.stop()
+                continue
 
-                # S 停止语音
-                if key == ord('s') or key == ord('S'):
-                    tts.play_beep()
-                    tts.stop()
-                    continue
-
-                # ESC 退出
-                if key == 27:
-                    break
-            else:
-                # 无头模式纯休眠
-                time.sleep(0.1)
+            # Q/q 退出
+            elif key.lower() == "q":
+                tts.play_beep()
+                break
 
     except KeyboardInterrupt:
         logger.info("收到中断信号")
     finally:
+        if old_settings is not None:
+            termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
         camera.release()
         ui.destroy()
         tts.stop()

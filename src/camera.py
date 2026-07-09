@@ -33,18 +33,39 @@ class CameraManager:
             return self._open_default(cam_id)
 
     def _open_jetson(self) -> bool:
-        """Jetson: 遍历摄像头 ID，使用 V4L2 后端"""
+        """Jetson: 优先 GStreamer MJPG pipeline，回退到索引扫描"""
+        width, height = self.width, self.height
+
+        # 方式1: GStreamer MJPG pipeline（兼容 Astra Plus 等 USB 摄像头）
+        pipe = (
+            f"v4l2src device=/dev/video0 ! "
+            f"image/jpeg,width={width},height={height},framerate=30/1 ! "
+            f"jpegdec ! videoconvert ! video/x-raw,format=BGR ! appsink drop=1"
+        )
+        cap = cv2.VideoCapture(pipe, cv2.CAP_GSTREAMER)
+        if cap.isOpened():
+            ret, frame = cap.read()
+            if ret and frame is not None:
+                self.cap = cap
+                logger.info(f"Jetson 摄像头已锁定: /dev/video0 (GStreamer MJPG, {width}x{height})")
+                return True
+            cap.release()
+
+        # 方式2: 遍历摄像头 ID
         for cam_id in CAMERA_CONFIG.get("auto_scan_ids", [0, 1, 2, 4, 5]):
-            cap = cv2.VideoCapture(cam_id, cv2.CAP_V4L2)
-            if cap.isOpened():
-                ret, frame = cap.read()
-                if ret and frame is not None:
-                    self.cap = cap
-                    self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
-                    self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
-                    logger.info(f"Jetson 摄像头已锁定 ID: {cam_id}")
-                    return True
-                cap.release()
+            for backend in [None, cv2.CAP_V4L2]:
+                cap = cv2.VideoCapture(cam_id) if backend is None else cv2.VideoCapture(cam_id, backend)
+                if cap.isOpened():
+                    ret, frame = cap.read()
+                    if ret and frame is not None:
+                        self.cap = cap
+                        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+                        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+                        backend_name = "default" if backend is None else "V4L2"
+                        logger.info(f"Jetson 摄像头已锁定 ID: {cam_id} (backend={backend_name})")
+                        return True
+                    cap.release()
+
         logger.error("Jetson 未检测到可用摄像头")
         return False
 
