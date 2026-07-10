@@ -9,16 +9,16 @@ An offline multimodal generative AI assistive system based on Gemma 4 for visual
 
 ## 项目展示幻灯片
 
-![幻灯片1](images/VisionLink_Project_Showcase/幻灯片1.JPG)
-![幻灯片2](images/VisionLink_Project_Showcase/幻灯片2.JPG)
-![幻灯片3](images/VisionLink_Project_Showcase/幻灯片3.JPG)
-![幻灯片4](images/VisionLink_Project_Showcase/幻灯片4.JPG)
-![幻灯片5](images/VisionLink_Project_Showcase/幻灯片5.JPG)
-![幻灯片6](images/VisionLink_Project_Showcase/幻灯片6.JPG)
-![幻灯片7](images/VisionLink_Project_Showcase/幻灯片7.JPG)
-![幻灯片8](images/VisionLink_Project_Showcase/幻灯片8.JPG)
-![幻灯片9](images/VisionLink_Project_Showcase/幻灯片9.JPG)
-![幻灯片10](images/VisionLink_Project_Showcase/幻灯片10.JPG)
+![幻灯片1](images/VisionLink_Project_Showcase/幻灯片1.PNG)
+![幻灯片2](images/VisionLink_Project_Showcase/幻灯片2.PNG)
+![幻灯片3](images/VisionLink_Project_Showcase/幻灯片3.PNG)
+![幻灯片4](images/VisionLink_Project_Showcase/幻灯片4.PNG)
+![幻灯片5](images/VisionLink_Project_Showcase/幻灯片5.PNG)
+![幻灯片6](images/VisionLink_Project_Showcase/幻灯片6.PNG)
+![幻灯片7](images/VisionLink_Project_Showcase/幻灯片7.PNG)
+![幻灯片8](images/VisionLink_Project_Showcase/幻灯片8.PNG)
+![幻灯片9](images/VisionLink_Project_Showcase/幻灯片9.PNG)
+![幻灯片10](images/VisionLink_Project_Showcase/幻灯片10.PNG)
 
 
 ---
