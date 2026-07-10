@@ -46,11 +46,13 @@ By leveraging lightweight multimodal models for efficient on-device inference, t
 
 ## Functional Modes
 
-By deeply integrating three distinct modalities—image vision, text comprehension, and audio broadcasting—the project offers three types of accessibility-friendly interactions:
+By deeply integrating three distinct modalities—image vision, text comprehension, and audio broadcasting—the project offers five types of accessibility-friendly interactions:
 
-1. **🟢 Obstacle Avoidance & Early Warning Mode**: Real-time identification of surrounding obstacles, precisely calculating relative bearings and estimated distances. It broadcasts real-time hazard avoidance routes via the audio modality to ensure safe travel.
+1. **🟢 YOLO Real-Time Obstacle Avoidance Mode**: YOLOv8 real-time detection of surrounding obstacles (person/car/bicycle, etc.), combined with depth distance estimation for precise relative bearing and distance calculation, with tiered voice alerts (danger/warning) to ensure travel safety.
 2. **🟡 Text Reading & OCR Mode**: Accurately recognizes text on pillboxes, street signs, and paper books. Optimized and polished by the VLM, it reads aloud in real time, offering perfect support for OCR and foreign language translation.
 3. **🔵 Scene Description Mode**: Provides colloquial, humanized summaries of the surrounding environment (stores, pedestrians, road conditions, etc.) to assist users with daily commuting, social interactions, and spatial awareness.
+4. **🟣 Face Detection Mode**: Recognizes facial information in the surroundings to assist in social scenarios.
+5. **⚪ Visual Q&A Mode**: Ask the VLM questions freely about the current scene for detailed answers.
 
 ---
 
@@ -107,16 +109,22 @@ VisionLink/
 ├── src/                    # Core Source Code (Cross-platform)
 │   ├── platform.py         # Platform detection & environment adaptation
 │   ├── config.py           # Unified configuration center
-│   ├── camera.py           # Camera management (DSHOW/V4L2)
-│   ├── inference.py        # Ollama multimodal inference pipeline
-│   ├── tts.py              # TTS audio synthesis (SAPI5/espeak)
-│   ├── ui.py               # UI rendering (auto-adapts to headless mode)
-│   ├── agent.py            # Automated task scheduler
-│   └── prompts.py          # Prompt template library
+│   ├── camera.py           # Dual camera management (POV glasses + FOV chest)
+│   ├── detection.py        # YOLOv8 real-time obstacle detection & depth estimation
+│   ├── inference.py        # Ollama multimodal inference (Gemma 4)
+│   ├── tts.py              # TTS synthesis (Piper > espeak-ng > edge-tts fallback)
+│   ├── ui.py               # UI rendering (YOLO overlay, auto-adapts to headless mode)
+│   ├── agent.py            # Core controller (state machine / auto mode / YOLO callback)
+│   └── prompts.py          # Prompt template library (CN/EN bilingual)
 ├── apps/                   # Application Entries
-│   ├── desktop.py          # Windows Desktop full-featured edition
-│   └── jetson.py           # Jetson Orin Nano Edge deployment edition
-├── scripts/                # Testing & utility scripts
+│   ├── desktop.py          # Windows/Linux Desktop GUI full-featured edition
+│   ├── headless.py         # Jetson headless mode (evdev global keyboard listener)
+│   └── jetson.py           # Jetson terminal keyboard compatible edition
+├── scripts/                # Diagnostic & testing scripts
+│   ├── check_system.py     # One-click system comprehensive diagnostic
+│   ├── check_camera.py     # Camera scanning & diagnostic
+│   └── check_audio.py      # Audio device detection & TTS test
+├── start.sh                # One-click launcher (5 modes)
 ├── archive/                # Legacy iteration history
 ├── assets/                 # Static resources (Fonts, Audio, Images)
 ├── docs/                   # Documentation
@@ -128,12 +136,12 @@ VisionLink/
 
 | Feature | Windows | Jetson |
 | :--- | :--- | :--- |
-| Model | `gemma4:e2b` | `gemma4:e2b-q4_K_S` |
+| Model | `gemma4:e2b` | `gemma4:e2b-it-qat` |
 | AI Resolution | 448px | 288px |
-| Camera Driver | DSHOW, ID=1 | V4L2, Auto-enumeration |
-| TTS Engine | PowerShell SAPI5 | `espeak` |
-| Buzzer | `winsound.Beep` | `speaker-test` |
-| UI Environment | Full Panel Display | Auto-fallback to Headless Mode |
+| Camera Driver | DSHOW, monocular | V4L2, dual-cam (POV ID=0 + FOV ID=2) |
+| TTS Engine | PowerShell SAPI5 | Piper (offline) > espeak-ng > edge-tts |
+| Audio Device | Default | AB13X USB Audio (plughw:1,0) |
+| UI Environment | Full Panel Display | Auto-adapt Headless / GUI debug window |
 
 ---
 
@@ -151,11 +159,17 @@ python apps/desktop.py
 
 ```bash
 pip install -r requirements-jetson.txt
-ollama pull gemma4:e2b-q4_K_S
-python apps/jetson.py
+ollama pull gemma4:e2b-it-qat
+
+# Multiple launch modes
+./start.sh              # Default: single-cam POV mode
+./start.sh dual         # Dual-cam mode (POV + FOV)
+./start.sh full         # Full mode (dual-cam + YOLO avoidance)
+./start.sh gui          # Headless + GUI debug window
+./start.sh desktop      # Desktop GUI mode
 ```
 
-> 💡 **Note**: Network connection is required ONLY during the initial model pull. During subsequent operations, all multimodal inference and speech synthesis pipelines run **100% locally and offline**.
+> 💡 **Note**: Network connection is required ONLY during the initial model pull. During subsequent operations, all multimodal inference, YOLO obstacle avoidance, and speech synthesis pipelines run **100% locally and offline**.
 
 ---
 
@@ -163,11 +177,17 @@ python apps/jetson.py
 
 | Hotkey | Corresponding Functional Mode |
 | :--- | :--- |
-| **Key 1** | Switch to 【Obstacle Avoidance & Early Warning Mode】 |
-| **Key 2** | Switch to 【Text Reading Mode】 |
-| **Key 3** | Switch to 【Scene Description Mode】 |
+| **Key 1** | Switch to 【YOLO Obstacle Avoidance Mode】（dual-cam + depth estimation + tiered voice alerts） |
+| **Key 2** | Switch to 【Text Reading Mode】（OCR + VLM polishing） |
+| **Key 3** | Switch to 【Scene Description Mode】（colloquial environment summary） |
+| **Key 4** | Switch to 【Face Detection Mode】 |
+| **Key 5** | Switch to 【Visual Q&A Mode】（free-form questions） |
 | **Spacebar** | **Trigger Interaction**: Capture Photo → Local VLM Processing → Earphone Audio Broadcast |
-| **ESC Key** | Exit and safely terminate the program |
+| **M Key** | Toggle 【Auto Mode】：timed auto-capture + YOLO avoidance |
+| **S Key** | Stop current speech playback |
+| **ESC / Q Key** | Exit and safely terminate the program |
+
+> 💡 In headless mode, the system uses **evdev global keyboard listener** (auto-detects `/dev/input/event*` physical keyboard), no window focus required.
 
 ---
 
@@ -177,8 +197,9 @@ python apps/jetson.py
 * [x] **Phase 2 (Edge Porting)**: Successfully ported the code stack to **Jetson Orin Nano (8GB)**; achieved memory optimization via INT4/INT8 quantization.
 * [x] **Phase 3 (Engineering Refactor)**: Modularized the code architecture; unified cross-platform interfaces and added headless mode support.
 * [x] **Phase 4 (Hardware Integration)**: Fabricated the prototype for the head-tracked micro Type-C glasses camera; initially verified POV image capture stability.
-* [ ] **Phase 5 (Product Enclosure)**: Complete 3D nylon printing for ergonomic wearable kits; seamlessly modify the tactical chest pack for motherboard concealment and passive cooling.
-* [ ] **Phase 6 (Vertical Expansion)**: Cross over to neighboring verticals, transferring technologies into network-isolated industrial inspection robotics and healthcare monitoring for elderlies with dementia.
+* [x] **Phase 5 (YOLO + Dual-Cam Fusion)**: Completed YOLOv8 real-time obstacle avoidance + depth distance estimation + dual-perspective fusion; global keyboard interaction in headless mode.
+* [ ] **Phase 6 (Product Enclosure)**: Complete 3D nylon printing for ergonomic wearable kits; seamlessly modify the tactical chest pack for motherboard concealment and passive cooling.
+* [ ] **Phase 7 (Vertical Expansion)**: Cross over to neighboring verticals, transferring technologies into network-isolated industrial inspection robotics and healthcare monitoring for elderlies with dementia.
 
 ---
 
