@@ -7,6 +7,23 @@ An offline multimodal generative AI assistive system based on Gemma 4 for visual
 
 ---
 
+## 项目展示幻灯片
+
+![幻灯片1](images/VisionLink_Project_Showcase/幻灯片1.JPG)
+![幻灯片2](images/VisionLink_Project_Showcase/幻灯片2.JPG)
+![幻灯片3](images/VisionLink_Project_Showcase/幻灯片3.JPG)
+![幻灯片4](images/VisionLink_Project_Showcase/幻灯片4.JPG)
+![幻灯片5](images/VisionLink_Project_Showcase/幻灯片5.JPG)
+![幻灯片6](images/VisionLink_Project_Showcase/幻灯片6.JPG)
+![幻灯片7](images/VisionLink_Project_Showcase/幻灯片7.JPG)
+![幻灯片8](images/VisionLink_Project_Showcase/幻灯片8.JPG)
+![幻灯片9](images/VisionLink_Project_Showcase/幻灯片9.JPG)
+![幻灯片10](images/VisionLink_Project_Showcase/幻灯片10.JPG)
+
+> 注意：幻灯片中展示的 GitHub 仓库地址（`mp2012/VisionLink-AI-Glasses`）已更新为 [YeetangOcean/VisionLink](https://github.com/YeetangOcean/VisionLink)
+
+---
+
 ## 目录
 
 - [VisionLink-AI-Glasses](#visionlink-ai-glasses)
