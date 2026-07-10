@@ -1,5 +1,15 @@
-opencv-python
-ollama
-pillow
-numpy
-espeak
+# VisionLink - Jetson Orin Nano 边缘端依赖
+opencv-python>=4.8.0
+ollama>=0.1.0
+pillow>=10.0.0
+numpy>=1.24.0
+
+# Jetson 专用
+edge-tts>=6.0.0
+
+# 可选：语音识别（语音交互模式）
+# speech_recognition>=3.10.0
+
+# 可选：YOLO 目标检测（需要先安装 PyTorch for Jetson）
+# 参考: https://docs.ultralytics.com/guides/nvidia-jetson/
+# ultralytics>=8.0.0

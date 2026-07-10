@@ -1,92 +1,267 @@
 """
-自动模式 Agent
-场景检测 → 任务分配 → 去重静默 → 异步执行
+核心控制中枢 - Agent
+负责：状态机管理、按键触发/自动模式交互、场景去重、YOLO 避障回调
+
+架构说明：
+- 自动模式：定时扫描场景 → 任务分配 → 去重静默 → 异步执行
+- 手动模式：按键触发单次推理 + TTS 播报
+- YOLO 回调：接收避障检测结果 → 分级播报
 """
+import os
 import time
 import logging
 import threading
+from typing import Optional, Dict, Any, Callable
+
+import cv2
 
 from .config import (
     AGENT_SCAN_INTERVAL, BROADCAST_COOLDOWN, LONG_TIME_LIMIT,
-    MAX_CONTEXT_ROUND, STATE_IDLE, STATE_LISTEN,
+    MAX_CONTEXT_ROUND, STATE_IDLE, STATE_LISTEN, STATE_INFER, STATE_TTS,
+    MODE_NAMES, SNAPSHOT_DIR, INFER_LOG_DIR, SPACE_DEBOUNCE,
 )
 from .prompts import AGENT_PROMPT, TASK_PLAN_PROMPT, TIP_VOICE, PROMPT_LIB
 
 logger = logging.getLogger(__name__)
 
 
-class AutoAgent:
-    """自动模式任务调度器"""
+class Agent:
+    """
+    核心控制中枢
+    统一管理：状态机、自动/手动模式、推理调度、YOLO 避障回调
 
-    def __init__(self, inference_engine, tts_engine):
+    Usage:
+        agent = Agent(inference_engine, tts_engine, camera_manager)
+        agent.set_mode(2)  # 文字识别模式
+        agent.handle_trigger(frame)  # 手动触发推理
+    """
+
+    def __init__(self, inference_engine, tts_engine, camera_manager=None):
         self.infer = inference_engine
         self.tts = tts_engine
-        self._enabled = False
-        self._last_run_time = 0
+        self.camera = camera_manager
+
+        # 状态机
+        self._state = STATE_IDLE
+        self._lock = threading.Lock()
+
+        # 模式管理
+        self._current_mode = 1  # 默认障碍物检测
+        self._voice_lang = "zh"
+
+        # 自动模式
+        self._auto_enabled = False
+        self._last_scan_time = 0.0
         self._last_broadcast = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0}
         self._last_tasks = []
         self._same_count = 0
+
+        # 语音交互上下文
         self._context_history = []
         self._mic_listening = False
-        self._voice_lang = "zh"
+
+        # 防抖
+        self._last_trigger_time = 0.0
+
+        # YOLO 避障
+        self._yolo_enabled = False
+        self._yolo_last_announce = 0.0
+
+        # 回调注册
+        self._callbacks: Dict[str, Callable] = {}
+
+    # ==================== 属性 ====================
 
     @property
-    def enabled(self) -> bool:
-        return self._enabled
+    def state(self) -> int:
+        return self._state
 
-    def toggle(self):
-        self._enabled = not self._enabled
-        return self._enabled
+    @property
+    def current_mode(self) -> int:
+        return self._current_mode
+
+    @property
+    def mode_name(self) -> str:
+        return MODE_NAMES[self._current_mode - 1] if 1 <= self._current_mode <= 5 else "未知"
+
+    @property
+    def auto_enabled(self) -> bool:
+        return self._auto_enabled
+
+    @property
+    def yolo_enabled(self) -> bool:
+        return self._yolo_enabled
+
+    @property
+    def is_busy(self) -> bool:
+        return self._state != STATE_IDLE or self.infer.is_busy
+
+    # ==================== 模式控制 ====================
+
+    def set_mode(self, mode_idx: int):
+        """切换功能模式 (1-5)"""
+        if 1 <= mode_idx <= 5:
+            self._current_mode = mode_idx
+            logger.info(f"切换模式: {mode_idx} - {self.mode_name}")
+            self.tts.speak(f"已切换至{self.mode_name}")
+
+    def toggle_auto(self) -> bool:
+        """开关自动模式"""
+        self._auto_enabled = not self._auto_enabled
+        tip_key = "auto_on" if self._auto_enabled else "auto_off"
+        self.tts.speak(TIP_VOICE[self._voice_lang].get(tip_key, ""))
+        logger.info(f"自动模式: {'开启' if self._auto_enabled else '关闭'}")
+        return self._auto_enabled
 
     def set_lang(self, lang: str):
+        """切换语种 (zh/en)"""
         self._voice_lang = lang
+        tip_key = f"lang_switch_{lang}"
+        self.tts.speak(TIP_VOICE[self._voice_lang].get(tip_key, ""))
+
+    # ==================== 事件回调注册 ====================
+
+    def on(self, event: str, callback: Callable):
+        """注册事件回调"""
+        self._callbacks[event] = callback
+
+    def _emit(self, event: str, *args):
+        """触发事件回调"""
+        cb = self._callbacks.get(event)
+        if cb:
+            try:
+                cb(*args)
+            except Exception as e:
+                logger.error(f"回调异常 [{event}]: {e}")
+
+    # ==================== 手动触发 ====================
+
+    def handle_trigger(self, frame, force: bool = False):
+        """
+        处理手动触发（如空格键拍照推理）
+
+        Args:
+            frame: 当前 POV 摄像头帧
+            force: 是否强制执行（忽略防抖和状态锁）
+        """
+        now = time.time()
+
+        # 防抖
+        if not force and (now - self._last_trigger_time < SPACE_DEBOUNCE):
+            return
+        self._last_trigger_time = now
+
+        if self.is_busy and not force:
+            logger.warning("系统忙，忽略触发")
+            return
+
+        # 拍照音效
+        self.tts.play_shutter()
+
+        # 异步执行推理
+        threading.Thread(
+            target=self._run_inference,
+            args=(frame.copy(), self._current_mode),
+            daemon=True
+        ).start()
+
+    # ==================== 自动模式 ====================
 
     def should_scan(self, now: float) -> bool:
-        return self._enabled and (now - self._last_run_time >= AGENT_SCAN_INTERVAL) and not self.infer.is_busy
+        """是否应该执行自动扫描"""
+        return (
+            self._auto_enabled
+            and not self.is_busy
+            and (now - self._last_scan_time >= AGENT_SCAN_INTERVAL)
+        )
 
-    def detect_tasks(self, frame) -> list:
-        """分析场景，返回任务编号列表"""
-        from .inference import InferenceEngine
-        img_b64 = InferenceEngine.image_to_base64(frame)
+    def auto_scan(self, frame):
+        """
+        自动模式场景扫描 + 任务执行
+
+        Args:
+            frame: 当前 POV 摄像头帧
+        """
+        self._last_scan_time = time.time()
+
+        img_b64 = self.infer.image_to_base64(frame)
         if not img_b64:
-            return []
+            return
+
         res = self.infer.infer(AGENT_PROMPT, img_b64)
         tasks = self._parse_task_numbers(res)
-        self._last_run_time = time.time()
-        logger.info(f"自动分配任务：{tasks}")
-        return tasks
+        logger.info(f"自动分配任务: {tasks}")
 
-    def execute_tasks(self, tasks: list, frame, func_map: dict):
-        """执行任务列表（带去重静默逻辑）"""
+        if not tasks:
+            return
+
+        self._execute_auto_tasks(tasks, frame)
+
+    def _execute_auto_tasks(self, tasks: list, frame):
+        """执行自动模式任务（带去重静默）"""
         now = time.time()
 
         # 场景去重
-        if tasks == self._last_tasks and len(tasks) > 0:
+        if tasks == self._last_tasks:
             self._same_count += 1
             if self._same_count >= 3:
                 for num in tasks:
                     self._last_broadcast[num] = now + LONG_TIME_LIMIT
-                self.tts.speak(TIP_VOICE[self._voice_lang]["no_change"])
+                self.tts.speak(TIP_VOICE[self._voice_lang].get("no_change", "画面无变化"))
                 return
         else:
             self._same_count = 0
             self._last_tasks = tasks.copy()
 
+        # 限制最多执行 2 个任务
         run_tasks = tasks[:2]
-        logger.info(f"自动模式执行任务（限2个）：{run_tasks}")
+        logger.info(f"自动执行任务（限2个）: {run_tasks}")
+
         for num in run_tasks:
             if now < self._last_broadcast[num] or self.infer.is_busy:
                 continue
-            func = func_map.get(num)
-            if func:
-                threading.Thread(target=func, args=(frame.copy(),), daemon=True).start()
-                self._last_broadcast[num] = now + BROADCAST_COOLDOWN
-                time.sleep(1.0)
+            self._last_broadcast[num] = now + BROADCAST_COOLDOWN
+            threading.Thread(
+                target=self._run_inference,
+                args=(frame.copy(), num),
+                daemon=True
+            ).start()
+            time.sleep(1.0)
+
+    # ==================== YOLO 避障回调 ====================
+
+    def on_yolo_detect(self, detection_result):
+        """
+        YOLO 检测结果回调（来自 detection.py）
+
+        Args:
+            detection_result: DetectionResult 实例
+        """
+        if not self._yolo_enabled:
+            return
+
+        now = time.time()
+        if now - self._yolo_last_announce < 2.0:
+            return  # 冷却
+
+        msg = detection_result.alert_message
+        if msg:
+            self._yolo_last_announce = now
+            logger.info(f"YOLO 避障播报: {msg}")
+            self.tts.speak(msg)
+
+    def toggle_yolo(self) -> bool:
+        """开关 YOLO 避障播报"""
+        self._yolo_enabled = not self._yolo_enabled
+        logger.info(f"YOLO 避障播报: {'开启' if self._yolo_enabled else '关闭'}")
+        return self._yolo_enabled
+
+    # ==================== 语音交互 ====================
 
     def handle_voice_chat(self, frame):
         """语音交互模式（带麦克风互斥锁）"""
         if self._mic_listening:
-            logger.warning("麦克风正忙，忽略")
+            logger.warning("麦克风正忙")
             return
 
         self._mic_listening = True
@@ -98,14 +273,16 @@ class AutoAgent:
                 audio = r.listen(source, timeout=8)
 
             user_text = r.recognize_google(audio, language="zh-CN")
-            logger.info(f"语音识别：{user_text}")
+            logger.info(f"语音识别: {user_text}")
 
             # 尝试解析为任务
-            task_raw = self.infer.infer(TASK_PLAN_PROMPT.format(user_cmd=user_text))
+            task_raw = self.infer.infer(
+                TASK_PLAN_PROMPT.format(user_cmd=user_text)
+            )
             tasks = self._parse_task_numbers(task_raw)
             if tasks:
-                self.tts.speak(TIP_VOICE[self._voice_lang]["cmd_ok"])
-                self.execute_tasks(tasks, frame, {})
+                self.tts.speak(TIP_VOICE[self._voice_lang].get("cmd_ok", "收到指令"))
+                self._execute_auto_tasks(tasks, frame)
                 return
 
             # 否则作为对话
@@ -113,19 +290,78 @@ class AutoAgent:
             history_str = ""
             for item in self._context_history:
                 history_str += f"User: {item['q']}\nAssistant: {item['a']}\n"
-            full_prompt = f"{history_str}\n{PROMPT_LIB[self._voice_lang][4]}\nUser: {user_text}"
+
+            prompt = PROMPT_LIB[self._voice_lang][4]
+            full_prompt = f"{history_str}\n{prompt}\nUser: {user_text}"
             ans = self.infer.infer(full_prompt, img_b64)
+
             if ans:
                 self.tts.speak(ans)
                 self._context_history.append({"q": user_text, "a": ans})
                 if len(self._context_history) > MAX_CONTEXT_ROUND:
                     self._context_history.pop(0)
 
+        except ImportError:
+            logger.warning("speech_recognition 未安装")
         except Exception as e:
-            logger.warning(f"语音识别异常：{e}")
-            self.tts.speak(TIP_VOICE[self._voice_lang]["mic_fail"])
+            logger.warning(f"语音识别异常: {e}")
+            self.tts.speak(TIP_VOICE[self._voice_lang].get("mic_fail", "语音识别失败"))
         finally:
             self._mic_listening = False
+
+    # ==================== 内部方法 ====================
+
+    def _run_inference(self, frame, mode_idx: int):
+        """
+        执行单次推理任务
+
+        Args:
+            frame: 图像帧
+            mode_idx: 模式编号 (1-5)
+        """
+        # 保存快照
+        snapshot_path = self._save_snapshot(frame)
+
+        # 图像编码
+        img_b64 = self.infer.image_to_base64(frame)
+        if not img_b64:
+            logger.error("图像编码失败，推理中止")
+            return
+
+        # 推理
+        logger.info(f"推理模式 {mode_idx} ({MODE_NAMES[mode_idx - 1]})，快照: {snapshot_path}")
+        prompt = PROMPT_LIB["zh"][mode_idx - 1]
+        result = self.infer.infer(prompt, img_b64)
+
+        if result:
+            # 保存推理日志
+            log_path = self._save_infer_log(snapshot_path, mode_idx, result)
+            logger.info(f"结果: {result[:80]}...")
+            logger.info(f"日志: {log_path}")
+
+            # TTS 播报
+            self.tts.speak(result)
+
+    def _save_snapshot(self, frame) -> str:
+        """保存快照图片"""
+        os.makedirs(SNAPSHOT_DIR, exist_ok=True)
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        path = os.path.join(SNAPSHOT_DIR, f"snap_{timestamp}.jpg")
+        cv2.imwrite(path, frame)
+        return path
+
+    def _save_infer_log(self, snapshot_path: str, mode_idx: int, result: str) -> str:
+        """保存推理日志"""
+        os.makedirs(INFER_LOG_DIR, exist_ok=True)
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        path = os.path.join(INFER_LOG_DIR, f"infer_{timestamp}.txt")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(f"时间：{time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write(f"模式：{MODE_NAMES[mode_idx - 1]}\n")
+            f.write(f"抓拍：{snapshot_path}\n")
+            f.write("=" * 40 + "\n")
+            f.write(result)
+        return path
 
     @staticmethod
     def _parse_task_numbers(raw: str) -> list:
@@ -135,3 +371,12 @@ class AutoAgent:
             return [int(n.strip()) for n in nums if 1 <= int(n.strip()) <= 5]
         except Exception:
             return []
+
+    # ==================== 生命周期 ====================
+
+    def shutdown(self):
+        """安全关闭"""
+        self.tts.stop()
+        self._auto_enabled = False
+        self._yolo_enabled = False
+        logger.info("Agent 已关闭")

@@ -1,153 +1,252 @@
 """
 UI 绘制模块
-Windows: PIL 中文渲染 + OpenCV 半透明侧面板
-Jetson 有显示器: 简化版 UI
-Jetson 无头: 空实现（Null Object Pattern），仅日志输出
+用于开发/演示端通过 OpenCV/PIL 渲染带有 YOLO 检测框、状态面板的合成画面
+
+特性：
+- 半透明侧面板（显示模式、状态、操作指引）
+- YOLO 检测框叠加（带颜色分级）
+- 无头模式自动适配（Null Object Pattern）
+- 中文字体渲染（PIL）
 """
+import os
 import logging
-import numpy as np
+from typing import Optional, Any
+
 import cv2
+import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 from .platform import IS_JETSON, IS_WINDOWS, HAS_DISPLAY
-from .config import (
-    UI_PANEL_WIDTH, UI_ALPHA, FONT_PATHS, FONT_SIZES,
-    STATE_IDLE, STATE_CAPTURE, STATE_LISTEN, STATE_INFER, STATE_TTS,
-)
-from .prompts import MODE_NAME_LIST, STATE_NAME_LIST, GUIDE_TEXT
+from .config import UI_PANEL_WIDTH, UI_ALPHA, UI_YOLO_BOX_COLOR, UI_DANGER_COLOR, UI_WARNING_COLOR
+from .config import MODE_NAMES, FONT_PATHS, FONT_SIZES, STATE_IDLE, STATE_INFER, STATE_TTS
 
 logger = logging.getLogger(__name__)
 
 
 class UIManager:
-    """跨平台 UI 管理器"""
+    """
+    UI 管理器
+    在开发/演示端渲染合成画面，无头模式下自动跳过绘制
 
-    def __init__(self):
-        self.enable_gui = IS_WINDOWS or HAS_DISPLAY
-        self.fonts = {}
+    Usage:
+        ui = UIManager()
+        ui.enable_gui = True  # 或 False（无头模式）
+        output = ui.render(frame, state, mode, info_texts)
+    """
+
+    def __init__(self, enable_gui: bool = None):
+        """
+        Args:
+            enable_gui: 是否启用 GUI 渲染。None 表示自动检测。
+        """
+        if enable_gui is None:
+            enable_gui = HAS_DISPLAY and not IS_JETSON
+        self.enable_gui = enable_gui
+        self._font = None
+        self._font_path = None
+
         if self.enable_gui:
-            self._load_fonts()
-        self._current_state = STATE_IDLE
-        self._current_mode = 1
-        self._auto_enabled = False
-        self._voice_lang = "zh"
+            self._init_font()
 
-    def _load_fonts(self):
-        """加载中文字体，依次尝试备选路径"""
-        for font_path in FONT_PATHS:
-            try:
-                sizes = FONT_SIZES
-                self.fonts = {
-                    sizes[0]: ImageFont.truetype(font_path, sizes[0]),
-                    sizes[1]: ImageFont.truetype(font_path, sizes[1]),
-                    sizes[2]: ImageFont.truetype(font_path, sizes[2]),
-                }
-                logger.info(f"字体加载成功: {font_path}")
-                return
-            except Exception:
-                continue
-        logger.error("所有中文字体加载失败，UI 将不可用")
-        self.enable_gui = False
+    def _init_font(self):
+        """加载中文字体"""
+        for fp in FONT_PATHS:
+            if os.path.exists(fp):
+                self._font_path = fp
+                try:
+                    self._font = ImageFont.truetype(fp, FONT_SIZES[0])
+                    logger.info(f"UI 字体加载: {fp}")
+                    return
+                except Exception:
+                    pass
+        logger.warning("未找到中文字体，UI 中文可能显示异常")
+        self._font = ImageFont.load_default()
 
-    def update_state(self, state: int, mode: int, auto: bool, lang: str):
-        """更新 UI 需要显示的状态信息"""
-        self._current_state = state
-        self._current_mode = mode
-        self._auto_enabled = auto
-        self._voice_lang = lang
+    # ==================== 主渲染接口 ====================
 
-    def draw_panel(self, frame):
-        """绘制侧边信息面板，无头模式直接返回原图"""
+    def render(
+        self,
+        frame,
+        state: int = STATE_IDLE,
+        current_mode: int = 1,
+        info_texts: list = None,
+        yolo_result=None,
+        auto_enabled: bool = False,
+        lang: str = "zh",
+    ) -> np.ndarray:
+        """
+        渲染合成画面
+
+        Args:
+            frame: 原始帧
+            state: 当前状态
+            current_mode: 当前模式编号
+            info_texts: 额外信息文本列表
+            yolo_result: YOLO 检测结果 (DetectionResult)
+            auto_enabled: 自动模式是否开启
+            lang: 语种
+
+        Returns:
+            合成后的帧（无头模式直接返回原帧）
+        """
         if not self.enable_gui:
             return frame
 
+        output = frame.copy()
+
+        # 叠加 YOLO 检测框
+        if yolo_result is not None and hasattr(yolo_result, 'objects'):
+            output = self._draw_yolo_boxes(output, yolo_result)
+
+        # 叠加状态面板
+        output = self._draw_panel(output, state, current_mode, info_texts, auto_enabled, lang)
+
+        return output
+
+    def render_fov_debug(self, fov_frame, yolo_detector):
+        """
+        渲染 FOV 调试画面（YOLO 检测框 + 统计信息）
+
+        Args:
+            fov_frame: FOV 摄像头原始帧
+            yolo_detector: YOLODetector 实例
+
+        Returns:
+            标注后的帧
+        """
+        if not self.enable_gui or yolo_detector is None:
+            return fov_frame
+
+        annotated = yolo_detector.annotate_frame(fov_frame)
+
+        # 叠加检测统计
+        stats = yolo_detector.get_stats()
+        stats_text = f"FOV YOLO | Frames: {stats['frame_count']} | Detects: {stats['detect_count']}"
+        cv2.putText(
+            annotated, stats_text, (10, 30),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1
+        )
+
+        return annotated
+
+    # ==================== 内部绘制方法 ====================
+
+    def _draw_yolo_boxes(self, frame, yolo_result) -> np.ndarray:
+        """在帧上绘制 YOLO 检测框"""
+        from .detection import OBSTACLE_LEVELS
+
+        output = frame.copy()
+        for obj in yolo_result.objects:
+            x1, y1, x2, y2 = obj["bbox"]
+            class_name = obj.get("class_name", "")
+            conf = obj.get("confidence", 0)
+
+            # 颜色分级
+            if obj["class_id"] in OBSTACLE_LEVELS.get("danger", {}):
+                color = UI_DANGER_COLOR
+            elif obj["class_id"] in OBSTACLE_LEVELS.get("warning", {}):
+                color = UI_WARNING_COLOR
+            else:
+                color = UI_YOLO_BOX_COLOR
+
+            cv2.rectangle(output, (x1, y1), (x2, y2), color, 2)
+            label = f"{class_name} {conf:.2f}"
+            cv2.putText(
+                output, label, (x1, max(y1 - 5, 10)),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1
+            )
+
+        return output
+
+    def _draw_panel(
+        self,
+        frame,
+        state: int,
+        mode: int,
+        info_texts: list,
+        auto_enabled: bool,
+        lang: str,
+    ) -> np.ndarray:
+        """绘制半透明侧面板"""
         h, w = frame.shape[:2]
-        panel_w = UI_PANEL_WIDTH
+        panel = np.zeros((h, UI_PANEL_WIDTH, 3), dtype=np.uint8)
+        panel[:] = (30, 30, 30)
 
-        overlay = frame.copy()
-        cv2.rectangle(overlay, (0, 0), (panel_w, h), (0, 0, 0), -1)
-        frame = cv2.addWeighted(overlay, UI_ALPHA, frame, 1 - UI_ALPHA, 0)
+        # 半透明叠加
+        roi = frame[:, w - UI_PANEL_WIDTH:w]
+        blended = cv2.addWeighted(roi, 1 - UI_ALPHA, panel, UI_ALPHA, 0)
+        output = frame.copy()
+        output[:, w - UI_PANEL_WIDTH:w] = blended
 
-        img_pil = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-        draw = ImageDraw.Draw(img_pil)
+        # 使用 PIL 绘制中文
+        pil_img = Image.fromarray(cv2.cvtColor(output, cv2.COLOR_BGR2RGB))
+        draw = ImageDraw.Draw(pil_img)
 
-        font_l = self.fonts.get(FONT_SIZES[0])
-        font_m = self.fonts.get(FONT_SIZES[1])
-        font_s = self.fonts.get(FONT_SIZES[2])
-        if not all([font_l, font_m, font_s]):
-            return frame
+        x_base = w - UI_PANEL_WIDTH + 10
+        y = 10
 
-        lang = self._voice_lang
-        y = 30
+        # 标题
+        draw.text((x_base, y), "VisionLink", fill=(0, 255, 255), font=self._font)
+        y += 35
 
-        # 状态指示
-        color_map = {
-            STATE_IDLE: (0, 220, 0),
-            STATE_CAPTURE: (220, 150, 0),
-            STATE_LISTEN: (255, 100, 0),
-            STATE_INFER: (160, 0, 220),
-            STATE_TTS: (0, 100, 255),
+        # 状态指示灯
+        state_colors = {
+            STATE_IDLE: (100, 100, 100),
+            STATE_INFER: (0, 255, 255),
+            STATE_TTS: (0, 255, 0),
         }
-        draw.rectangle([10, y - 15, 30, y + 5], fill=color_map.get(self._current_state, (128, 128, 128)))
-        status_txt = STATE_NAME_LIST[lang][self._current_state]
-        prefix = "状态：" if lang == "zh" else "Status: "
-        draw.text((45, y - 12), f"{prefix}{status_txt}", font=font_l, fill=(255, 255, 255))
-        y += 45
+        state_names = {STATE_IDLE: "空闲", STATE_INFER: "推理中", STATE_TTS: "播报中"}
+        color = state_colors.get(state, (100, 100, 100))
+        state_text = state_names.get(state, "未知")
+        draw.text((x_base, y), f"● {state_text}", fill=color, font=self._font)
+        y += 25
 
         # 当前模式
-        mode_txt = MODE_NAME_LIST[lang][self._current_mode - 1]
-        prefix = "模式 " if lang == "zh" else "Mode "
-        draw.text((15, y - 12), f"{prefix}{self._current_mode}：{mode_txt}", font=font_m, fill=(0, 255, 255))
-        y += 40
+        mode_name = MODE_NAMES[mode - 1] if 1 <= mode <= 5 else "未知"
+        draw.text((x_base, y), f"模式: {mode_name}", fill=(255, 255, 255), font=self._font)
+        y += 25
 
         # 自动模式
-        if self._auto_enabled:
-            auto_txt = "自动模式：已开启(按M关闭)" if lang == "zh" else "Auto Agent: ON (M=OFF)"
-            auto_color = (0, 255, 0)
-        else:
-            auto_txt = "自动模式：已关闭(按M开启)" if lang == "zh" else "Auto Agent: OFF (M=ON)"
-            auto_color = (120, 120, 120)
-        draw.text((15, y - 12), auto_txt, font=font_m, fill=auto_color)
-        y += 40
+        auto_text = "自动: ON" if auto_enabled else "自动: OFF"
+        auto_color = (0, 255, 0) if auto_enabled else (150, 150, 150)
+        draw.text((x_base, y), auto_text, fill=auto_color, font=self._font)
+        y += 25
 
         # 语种
-        lang_txt = "当前语种：中文" if lang == "zh" else "Language: English"
-        draw.text((15, y - 12), lang_txt, font=font_m, fill=(255, 200, 0))
-        y += 45
+        lang_text = "EN" if lang == "en" else "中文"
+        draw.text((x_base, y), f"语言: {lang_text}", fill=(200, 200, 200), font=self._font)
+        y += 30
 
-        # 操作指引
-        g = GUIDE_TEXT[lang]
-        draw.text((15, y - 12), g["title"], font=font_m, fill=(255, 255, 255))
-        y += 35
-        for key_name in ["key1", "key2", "key3", "key4", "key5", "key6"]:
-            color = (255, 255, 255)
-            if key_name == "key3":
-                color = (255, 200, 0)
-            elif key_name == "key4":
-                color = (0, 255, 0)
-            elif key_name == "key5":
-                color = (255, 0, 0)
-            draw.text((15, y - 10), g[key_name], font=font_s, fill=color)
-            y += 30
-        y += 20
+        # 分隔线
+        draw.line([(x_base, y), (w - 10, y)], fill=(100, 100, 100), width=1)
+        y += 10
 
-        draw.text((15, y - 10), g["pipe"], font=font_s, fill=(200, 200, 200))
-        y = h - 25
-        draw.text((15, y - 10), "VisionLink | Edge AI", font=font_s, fill=(150, 150, 150))
+        # 额外信息
+        if info_texts:
+            for text in info_texts:
+                draw.text((x_base, y), str(text)[:30], fill=(200, 200, 200), font=self._font)
+                y += 20
 
-        return cv2.cvtColor(np.array(img_pil), cv2.COLOR_RGB2BGR)
+        # 转回 OpenCV 格式
+        output = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
+        return output
 
-    def show(self, window_name: str, frame):
-        """显示画面，无头模式跳过"""
-        if self.enable_gui:
-            cv2.imshow(window_name, frame)
+    # ==================== 工具方法 ====================
 
-    def create_window(self, name: str, width: int, height: int):
-        """创建预览窗口，无头模式跳过"""
-        if self.enable_gui:
-            cv2.namedWindow(name, cv2.WINDOW_NORMAL)
-            cv2.resizeWindow(name, width, height)
+    def create_debug_window(self, name: str, frame: np.ndarray = None):
+        """创建调试窗口（仅 GUI 模式有效）"""
+        if not self.enable_gui:
+            return
+        cv2.namedWindow(name, cv2.WINDOW_NORMAL)
+        if frame is not None:
+            cv2.imshow(name, frame)
+
+    def show_frame(self, name: str, frame: np.ndarray):
+        """显示帧（仅 GUI 模式有效）"""
+        if self.enable_gui and frame is not None:
+            cv2.imshow(name, frame)
 
     def destroy(self):
+        """销毁所有窗口"""
         if self.enable_gui:
             cv2.destroyAllWindows()

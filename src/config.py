@@ -1,25 +1,44 @@
 """
 统一配置中心
 所有可调参数一处管理，平台差异自动切换。
+支持双摄像头架构：POV（镜腿单目）+ FOV（胸前深度相机）
 """
+import os
 from .platform import IS_JETSON, IS_WINDOWS
 
 # ==================== 模型配置 ====================
-MODEL_NAME = "gemma4:e2b-it-qat" if IS_JETSON else "gemma4:e2b-it-qat"
+MODEL_NAME = "gemma4:e2b-it-qat"
 
-# ==================== 摄像头配置 ====================
-CAMERA_CONFIG = {
+# ==================== 双摄像头配置 ====================
+# POV 摄像头（镜腿单目）：高清晰度，用于大模型推理
+POV_CAMERA_CONFIG = {
     "cam_id": 0 if IS_JETSON else 0,
     "backend": "V4L2" if IS_JETSON else "DSHOW",
     "width": 640 if IS_JETSON else 800,
     "height": 480 if IS_JETSON else 600,
     "auto_scan_ids": [0, 1, 2, 4, 5] if IS_JETSON else None,
+    "gstreamer_pipeline": True if IS_JETSON else False,
+    "framerate": 30,
 }
+
+# FOV 摄像头（胸前深度相机）：常开流式，用于 YOLO 避障
+FOV_CAMERA_CONFIG = {
+    "cam_id": 2 if IS_JETSON else 1,
+    "backend": "V4L2" if IS_JETSON else "DSHOW",
+    "width": 640 if IS_JETSON else 640,
+    "height": 480 if IS_JETSON else 480,
+    "auto_scan_ids": [2, 1, 4, 5] if IS_JETSON else None,
+    "gstreamer_pipeline": True if IS_JETSON else False,
+    "framerate": 30,
+}
+
+# 向后兼容（旧代码可能使用 CAMERA_CONFIG）
+CAMERA_CONFIG = POV_CAMERA_CONFIG
 
 # ==================== AI 推理配置 ====================
 AI_IMAGE_SIZE = 288 if IS_JETSON else 448
 JPEG_QUALITY = 70
-TIMEOUT_INFER = 8 if IS_JETSON else 12
+TIMEOUT_INFER = 30 if IS_JETSON else 12
 TIMEOUT_ASR = 8
 AGENT_SCAN_INTERVAL = 6.0 if IS_JETSON else 5.0
 BROADCAST_COOLDOWN = 15
@@ -27,16 +46,69 @@ LONG_TIME_LIMIT = 40
 MAX_CONTEXT_ROUND = 3
 
 # 推理额外选项（Jetson 限制上下文窗口）
+# gemma4 是 thinking 模型，thinking 消耗 token 多
+# GPU 模式下速度提升，num_predict 可适当增大
+# 768 足够完成 thinking + 简短输出，场景描述约 20~30s
 INFER_OPTIONS = {
     "timeout": TIMEOUT_INFER * 1000,
 }
 if IS_JETSON:
-    INFER_OPTIONS["num_ctx"] = 256
-    INFER_OPTIONS["num_predict"] = 128
+    INFER_OPTIONS["num_ctx"] = 1024
+    INFER_OPTIONS["num_predict"] = 768
+
+# ==================== YOLO 检测配置 ====================
+YOLO_CONFIG = {
+    "model_path": "yolov8n.pt",          # YOLOv8 nano 模型路径
+    "confidence_threshold": 0.5,          # 检测置信度阈值
+    "nms_threshold": 0.45,                # NMS 阈值
+    "detect_classes": [0, 1, 2, 3, 5, 7],  # person, bicycle, car, motorcycle, bus, truck
+    "detect_interval": 0.1,               # 检测间隔（秒），约 10 FPS
+    "depth_warning_distance": 1.5,        # 深度预警距离（米）
+    "depth_danger_distance": 0.5,         # 深度危险距离（米）
+    "announce_cooldown": 2.0,             # 播报冷却时间（秒），避免重复播报
+}
+
+# ==================== 音频配置 ====================
+if IS_JETSON:
+    # 自动检测 AB13X USB Audio 设备号（避免 card 编号漂移）
+    AUDIO_DEVICE = None
+    try:
+        with open("/proc/asound/cards", "r") as f:
+            for line in f:
+                if "AB13X" in line:
+                    card_num = line.strip().split()[0]
+                    AUDIO_DEVICE = f"plughw:{card_num},0"
+                    break
+    except Exception:
+        pass
+    if AUDIO_DEVICE is None:
+        AUDIO_DEVICE = "plughw:0,0"  # 回退默认值
+
+    # 离线 TTS 配置：优先 piper（音质好），回退 espeak-ng
+    TTS_ENGINE = "piper"  # "piper" | "espeak" | "edge"（在线）
+    TTS_PIPER_MODEL = "/opt/seeed/development_guide/12_llm_offline/seeed_ws/src/largemodel/MODELS/tts/zh/zh_CN-huayan-medium.onnx"
+    TTS_PIPER_CONFIG = "/opt/seeed/development_guide/12_llm_offline/seeed_ws/src/largemodel/MODELS/tts/zh/zh_CN-huayan-medium.onnx.json"
+    TTS_VOICE = "zh-CN-XiaoxiaoNeural"  # 仅 edge-tts 模式使用
+else:
+    AUDIO_DEVICE = None
+    TTS_ENGINE = "edge"
+    TTS_PIPER_MODEL = None
+    TTS_PIPER_CONFIG = None
+    TTS_VOICE = None
+
+# 音效文件路径
+SOUND_EFFECTS = {
+    "shutter": os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets", "audio", "pic.mp3"),
+    "beep": None,  # 动态生成
+    "alert": None,
+}
 
 # ==================== UI 配置 ====================
 UI_PANEL_WIDTH = 320
 UI_ALPHA = 0.65
+UI_YOLO_BOX_COLOR = (0, 255, 0)    # 绿色边界框
+UI_DANGER_COLOR = (0, 0, 255)       # 红色危险
+UI_WARNING_COLOR = (0, 255, 255)    # 黄色警告
 
 # ==================== 空格防抖 ====================
 SPACE_DEBOUNCE = 0.8  # 秒
@@ -70,3 +142,6 @@ STATE_CAPTURE = 1
 STATE_LISTEN = 2
 STATE_INFER = 3
 STATE_TTS = 4
+
+# ==================== 模式名称 ====================
+MODE_NAMES = ["障碍物检测", "文字识别", "人脸检测", "场景描述", "图文问答"]

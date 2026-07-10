@@ -72,14 +72,14 @@ TIP_VOICE = {
 PROMPT_LIB = {
     "zh": [
         "你是智能辅助眼镜的障碍物提醒助手，用简短一句话中文提醒道路风险。",
-        "请识别并读出图片中的所有文字内容。只输出文字内容本身，不要加任何解释、问候或额外描述。如果没有文字，只回复'没有文字'。",
+        "直接列出图中的文字，不解释不思考。无文字则回复'没有'。",
         "检测画面中的人脸并给出简短提示。",
         "用简短中文介绍眼前风景场景。",
         "结合图片回答问题，支持中英互译，回答简洁。"
     ],
     "en": [
         "You are an obstacle reminder for smart glasses, warn road hazards briefly in English.",
-        "Read all printed text in the picture briefly in English. Do not output any notes, just text.",
+        "List all text in the image directly, no explanation. Say 'none' if no text.",
         "Detect faces and give a short prompt in English.",
         "Briefly introduce the scene in English.",
         "Answer questions with image, support translation, keep answer short in English."

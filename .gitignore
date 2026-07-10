@@ -7,6 +7,7 @@ __pycache__/
 .idea/
 .vscode/
 *.swp
+.codebuddy/
 
 # 运行时生成
 saved_captures/
@@ -18,3 +19,11 @@ debug_logs/
 # 系统文件
 .DS_Store
 Thumbs.db
+
+# 大文件 / 模型 / 二进制
+yolov8n.pt
+ollama-linux-arm64-jetpack6.tar.zst
+lib/
+*.tar.zst
+*.tar.gz
+*.zip
