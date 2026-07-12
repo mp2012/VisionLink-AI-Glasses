@@ -116,6 +116,12 @@ An offline multimodal generative AI assistive system based on Gemma 4 for visual
 | **能源动力系统** | <img src="images/hardware/1%20(1).jpg" width="180" alt="高功率移动电源"/> | **大功率 PD 快充移动电源 (20000mAh / 165W)**<br>• 人体工学重量分配设计，确保边缘计算机在高吞吐推理负载下持续运行 6 小时以上。 |
 | **电力诱骗线缆** | <img src="images/hardware/1%20(6).jpg" width="180" alt="DC诱骗线"/> | **Type-C 转 DC 专用高电流诱骗线**<br>• 内置 PD 快充协议诱骗芯片，完美稳压移动电源输出电压以匹配 Jetson 主板标准。 |
 
+### 3. 实物穿戴效果展示
+
+当前工程原型（MVP）穿戴效果：
+
+![实物穿戴效果](images/hardware/wearable_demo.jpg)
+
 ---
 
 ## 项目结构
@@ -217,6 +223,10 @@ ollama pull gemma4:e2b-it-qat
 * [x] **Phase 4 (硬件联调)**：完成镜腿微型 Type-C 摄像头原型制作，初步验证 POV 图像采集稳定性。
 * [x] **Phase 5 (工程封装)**：完成 YOLOv8 实时避障 + 深度距离估计 + 双视角融合，无头模式全局键盘交互。
 * [ ] **Phase 6 (工业设计)**：完成 3D 打印尼龙人体工学挂脖/背包打样，推出商业级 MVP 样机。
+
+  **未来概念设计**：
+
+  ![未来概念图](images/concept/future_concept.png)
 * [ ] **Phase 7 (场景外溢)**：横向跨界，平移至无网工业巡检机器人、失智老人健康看护等垂直市场。
 
 ---
