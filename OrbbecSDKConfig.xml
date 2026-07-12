@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Config>
+    <Log>
+        <!-- 关闭控制台日志输出，消除 "Wait for frame timeout" 等噪音 -->
+        <ConsoleLogLevel>5</ConsoleLogLevel>
+        <!-- 文件日志也关闭 -->
+        <FileLogLevel>5</FileLogLevel>
+        <LogLevel>5</LogLevel>
+        <Async>false</Async>
+    </Log>
+    <Memory>
+        <EnableMemoryPool>true</EnableMemoryPool>
+        <MaxFrameBufferSize>512</MaxFrameBufferSize>
+        <PipelineFrameQueueSize>4</PipelineFrameQueueSize>
+        <FrameProcessingBlockQueueSize>4</FrameProcessingBlockQueueSize>
+    </Memory>
+</Config>

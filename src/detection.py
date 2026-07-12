@@ -4,7 +4,8 @@ YOLO 实时障碍物检测模块
 
 特性：
 - 独立线程运行，不阻塞大模型推理和 TTS 播报
-- 支持深度距离估计和分级预警（警告/危险）
+- 支持 Orbbec 深度相机真实距离测量 + bbox 位置估算双模式
+- 分级预警（警告/危险）
 - 播报冷却机制，避免重复提醒
 - 异常重连与日志记录
 """
@@ -18,7 +19,7 @@ import cv2
 import numpy as np
 
 from .platform import IS_JETSON
-from .config import YOLO_CONFIG
+from .config import YOLO_CONFIG, DEPTH_CONFIG, YOLO_PAUSE_EVENT
 
 logger = logging.getLogger(__name__)
 
@@ -68,23 +69,34 @@ class YOLODetector:
     YOLO 实时障碍物检测器
     独立线程运行，通过回调函数输出检测结果
 
+    支持两种深度模式：
+    1. Orbbec 真实深度：通过 depth_camera 参数传入 OrbbecDepthCamera 实例
+    2. bbox 位置估算：仅使用 FOV RGB 摄像头，根据目标在画面中的位置估算距离
+
     Usage:
+        # 纯 RGB 模式
         detector = YOLODetector(fov_camera, on_detect=handle_detection)
+
+        # 深度相机模式
+        detector = YOLODetector(fov_camera, depth_camera=orbbec_cam, on_detect=handle_detection)
         detector.start()
         ...
         detector.stop()
     """
 
-    def __init__(self, camera_manager, on_detect=None, config: dict = None):
+    def __init__(self, camera_manager, depth_camera=None, on_detect=None, config: dict = None):
         """
         Args:
             camera_manager: FOV 摄像头管理器实例
+            depth_camera: OrbbecDepthCamera 实例（可选，启用真实深度测量）
             on_detect: 检测回调函数 callback(DetectionResult)
             config: 检测配置字典，默认使用 YOLO_CONFIG
         """
         self.camera = camera_manager
+        self.depth_camera = depth_camera
         self.on_detect = on_detect
         self.config = {**YOLO_CONFIG, **(config or {})}
+        self._depth_config = DEPTH_CONFIG
 
         self._model = None
         self._running = False
@@ -96,6 +108,11 @@ class YOLODetector:
         # 统计
         self._frame_count = 0
         self._detect_count = 0
+
+    @property
+    def has_depth(self) -> bool:
+        """是否启用了真实深度相机"""
+        return self.depth_camera is not None and self.depth_camera.is_running()
 
     def _load_model(self) -> bool:
         """加载 YOLO 模型"""
@@ -156,6 +173,11 @@ class YOLODetector:
         last_detect_time = 0.0
 
         while self._running:
+            # 独占模式：VLM 推理进行时暂停 YOLO，释放 GPU 显存
+            if not YOLO_PAUSE_EVENT.is_set():
+                YOLO_PAUSE_EVENT.wait(timeout=0.5)
+                continue
+
             try:
                 # 读取 FOV 帧
                 ret, frame = self.camera.read()
@@ -192,13 +214,18 @@ class YOLODetector:
                 time.sleep(0.1)
 
     def _detect_frame(self, frame) -> DetectionResult:
-        """对单帧执行目标检测"""
+        """对单帧执行目标检测，融合深度数据"""
         result = DetectionResult()
         conf_threshold = self.config["confidence_threshold"]
 
         try:
             if self._model is None:
                 return result
+
+            # 获取最新深度图（后台线程持续缓存，非阻塞读取）
+            depth_map = None
+            if self.has_depth:
+                depth_map, _ = self.depth_camera.get_frames()
 
             # YOLO 推理
             detections = self._model(frame, verbose=False)
@@ -221,12 +248,17 @@ class YOLODetector:
                 xyxy = boxes.xyxy[i].cpu().numpy()
                 x1, y1, x2, y2 = map(int, xyxy)
 
-                # 计算目标中心位置
+                # 计算目标中心位置（归一化坐标）
                 cx = (x1 + x2) / 2 / frame.shape[1]
                 cy = (y1 + y2) / 2 / frame.shape[0]
 
-                # 位置描述
-                position = self._describe_position(cx, cy)
+                # 获取真实深度（mm）
+                depth_mm = -1.0
+                if depth_map is not None:
+                    depth_mm = self.depth_camera.get_bbox_depth(depth_map, x1, y1, x2, y2)
+
+                # 位置描述 + 距离描述
+                position = self._describe_position(cx, cy, depth_mm)
                 class_name = COCO_CLASSES.get(cls_id, f"物体({cls_id})")
 
                 obj_info = {
@@ -235,11 +267,12 @@ class YOLODetector:
                     "confidence": conf,
                     "bbox": (x1, y1, x2, y2),
                     "position": position,
+                    "depth_mm": depth_mm,
                 }
                 result.objects.append(obj_info)
 
-                # 分级预警
-                alert_text = self._classify_alert(cls_id, position)
+                # 分级预警（融合深度数据）
+                alert_text = self._classify_alert(cls_id, position, depth_mm)
                 if alert_text:
                     if cls_id in OBSTACLE_LEVELS.get("danger", {}):
                         result.dangers.append(alert_text)
@@ -251,9 +284,17 @@ class YOLODetector:
 
         return result
 
-    @staticmethod
-    def _describe_position(cx: float, cy: float) -> str:
-        """根据目标中心位置描述方位"""
+    def _describe_position(self, cx: float, cy: float, depth_mm: float = -1) -> str:
+        """
+        根据目标中心位置和深度描述方位
+
+        Args:
+            cx, cy: 目标中心归一化坐标 (0~1)
+            depth_mm: 真实深度 (mm)，-1 表示不可用
+
+        Returns:
+            方位描述字符串，如 "正前方约2米处"
+        """
         if cx < 0.35:
             h_pos = "左侧"
         elif cx > 0.65:
@@ -268,11 +309,74 @@ class YOLODetector:
         else:
             v_pos = "前方"
 
-        return f"{h_pos}{v_pos}"
+        # 如果深度数据可用，附加距离信息
+        if depth_mm > 0:
+            if depth_mm < 1000:
+                dist_text = f"约{int(depth_mm / 100) * 100}毫米"
+            else:
+                dist_text = self._format_distance_zh(depth_mm)
+            return f"{h_pos}{v_pos}{dist_text}"
+        else:
+            return f"{h_pos}{v_pos}"
 
     @staticmethod
-    def _classify_alert(cls_id: int, position: str) -> str:
-        """根据类别和位置生成预警文本"""
+    def _format_distance_zh(depth_mm: float) -> str:
+        """
+        将距离转为中文口语化表达，避免 TTS 误读
+        例如：1100mm → "约一点一米"，1050mm → "约一米"，980mm → "约980毫米"
+        """
+        meters = depth_mm / 1000.0
+        if meters < 1.0:
+            return f"约{int(depth_mm / 100) * 100}毫米"
+
+        # 保留一位小数，转换为中文口语数字
+        m = round(meters, 1)
+        int_part = int(m)
+        frac_part = round((m - int_part) * 10)
+
+        digits_cn = {"0": "零", "1": "一", "2": "二", "3": "三", "4": "四",
+                      "5": "五", "6": "六", "7": "七", "8": "八", "9": "九"}
+
+        if frac_part == 0:
+            return f"约{''.join(digits_cn.get(c, c) for c in str(int_part))}米"
+        else:
+            int_str = ''.join(digits_cn.get(c, c) for c in str(int_part))
+            frac_str = digits_cn.get(str(frac_part), str(frac_part))
+            return f"约{int_str}点{frac_str}米"
+
+    def _classify_alert(self, cls_id: int, position: str, depth_mm: float = -1) -> str:
+        """
+        根据类别、位置和深度生成预警文本
+
+        Args:
+            cls_id: YOLO 类别 ID
+            position: 方位描述字符串
+            depth_mm: 真实深度 (mm)
+
+        Returns:
+            预警文本字符串
+        """
+        # 如果深度数据可用，根据距离调整预警等级
+        if depth_mm > 0:
+            danger_dist = self._depth_config.get("danger_distance_mm", 500)
+            warning_dist = self._depth_config.get("warning_distance_mm", 1500)
+
+            if depth_mm < danger_dist:
+                # 进入危险范围，强制提升为 danger
+                if cls_id in OBSTACLE_LEVELS["danger"]:
+                    return f"{position}{OBSTACLE_LEVELS['danger'][cls_id]}，距离很近！"
+                elif cls_id in OBSTACLE_LEVELS["warning"]:
+                    return f"{position}{OBSTACLE_LEVELS['warning'][cls_id]}，距离很近！"
+            elif depth_mm < warning_dist:
+                if cls_id in OBSTACLE_LEVELS["danger"]:
+                    return f"{position}{OBSTACLE_LEVELS['danger'][cls_id]}"
+                elif cls_id in OBSTACLE_LEVELS["warning"]:
+                    return f"{position}{OBSTACLE_LEVELS['warning'][cls_id]}"
+
+            # 超出预警范围，静默
+            return ""
+
+        # 无深度数据时，使用原有的位置估算逻辑
         if cls_id in OBSTACLE_LEVELS["danger"]:
             return f"{position}{OBSTACLE_LEVELS['danger'][cls_id]}"
         if cls_id in OBSTACLE_LEVELS["warning"]:

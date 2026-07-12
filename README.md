@@ -109,12 +109,12 @@ An offline multimodal generative AI assistive system based on Gemma 4 for visual
 
 | 硬件模块 | 实物图参考 | 规格与作用说明 |
 | :--- | :---: | :--- |
-| **第一人称视角 (POV)**<br>镜腿微型单目摄像头 | <img src="images/1%20(2).jpg" width="180" alt="镜腿微型摄像头"/> | **微型 Type-C 摄像头模组**<br>• 超轻量设计，无缝夹持于普通眼镜镜腿，视角随头部自然转动。<br>• 负责灵活交互场景（文字 OCR、红绿灯识别、特定物体辨认、通用知识问答）。 |
-| **边缘计算大脑** | <img src="images/1%20(3).jpg" width="180" alt="Jetson Orin Nano"/> | **NVIDIA Jetson Orin Nano Dev Kit (8GB)**<br>• 系统便携核心，安全收纳于背包/胸包中。<br>• 提供高达 40 TOPS 的 AI 算力，完美运行量化后的端侧大模型。 |
-| **第三人称视角 (FOV)**<br>胸前深度摄像头 | <img src="images/1%20(7).jpg" width="180" alt="深度摄像头"/> | **Orbbec Astra Plus / 微型 HD 摄像头组件**<br>• 嵌入固定于四点式战术胸包，保持稳定的水平视角。<br>• 输出实时 3D 深度图，专用于路径导航、跌落检测及低矮障碍物规避。 |
-| **语音音频输出** | <img src="images/1%20(4).jpg" width="180" alt="耳夹式微型耳机"/> | **耳夹式开放耳道微型耳机**<br>• 开放耳道设计，私密播报 AI 语音反馈，同时不阻断环境音感知，保障视障用户出行安全。 |
-| **能源动力系统** | <img src="images/1%20(1).jpg" width="180" alt="高功率移动电源"/> | **大功率 PD 快充移动电源 (20000mAh / 165W)**<br>• 人体工学重量分配设计，确保边缘计算机在高吞吐推理负载下持续运行 6 小时以上。 |
-| **电力诱骗线缆** | <img src="images/1%20(6).jpg" width="180" alt="DC诱骗线"/> | **Type-C 转 DC 专用高电流诱骗线**<br>• 内置 PD 快充协议诱骗芯片，完美稳压移动电源输出电压以匹配 Jetson 主板标准。 |
+| **第一人称视角 (POV)**<br>镜腿微型单目摄像头 | <img src="images/hardware/1%20(2).jpg" width="180" alt="镜腿微型摄像头"/> | **微型 Type-C 摄像头模组**<br>• 超轻量设计，无缝夹持于普通眼镜镜腿，视角随头部自然转动。<br>• 负责灵活交互场景（文字 OCR、红绿灯识别、特定物体辨认、通用知识问答）。 |
+| **边缘计算大脑** | <img src="images/hardware/1%20(3).jpg" width="180" alt="Jetson Orin Nano"/> | **NVIDIA Jetson Orin Nano Dev Kit (8GB)**<br>• 系统便携核心，安全收纳于背包/胸包中。<br>• 提供高达 40 TOPS 的 AI 算力，完美运行量化后的端侧大模型。 |
+| **第三人称视角 (FOV)**<br>胸前深度摄像头 | <img src="images/hardware/1%20(7).jpg" width="180" alt="深度摄像头"/> | **Orbbec Astra Plus / 微型 HD 摄像头组件**<br>• 嵌入固定于四点式战术胸包，保持稳定的水平视角。<br>• 输出实时 3D 深度图，专用于路径导航、跌落检测及低矮障碍物规避。 |
+| **语音音频输出** | <img src="images/hardware/1%20(4).jpg" width="180" alt="耳夹式微型耳机"/> | **耳夹式开放耳道微型耳机**<br>• 开放耳道设计，私密播报 AI 语音反馈，同时不阻断环境音感知，保障视障用户出行安全。 |
+| **能源动力系统** | <img src="images/hardware/1%20(1).jpg" width="180" alt="高功率移动电源"/> | **大功率 PD 快充移动电源 (20000mAh / 165W)**<br>• 人体工学重量分配设计，确保边缘计算机在高吞吐推理负载下持续运行 6 小时以上。 |
+| **电力诱骗线缆** | <img src="images/hardware/1%20(6).jpg" width="180" alt="DC诱骗线"/> | **Type-C 转 DC 专用高电流诱骗线**<br>• 内置 PD 快充协议诱骗芯片，完美稳压移动电源输出电压以匹配 Jetson 主板标准。 |
 
 ---
 
@@ -122,7 +122,7 @@ An offline multimodal generative AI assistive system based on Gemma 4 for visual
 
 ```
 VisionLink/
-├── src/                    # 核心源码（跨平台）
+├── src/                    # 核心源码（跨平台，10 个模块）
 │   ├── platform.py         # 平台检测与环境适配
 │   ├── config.py           # 统一配置中心
 │   ├── camera.py           # 双摄像头管理（POV 镜腿 + FOV 胸前）
@@ -131,19 +131,21 @@ VisionLink/
 │   ├── tts.py              # TTS 语音合成（Piper/espeak-ng/edge-tts 三级回退）
 │   ├── ui.py               # UI 绘制（YOLO 检测框叠加，自动适配无头模式）
 │   ├── agent.py            # 核心控制中枢（状态机 / 自动模式 / YOLO 回调）
-│   └── prompts.py          # Prompt 模板库（中英双语）
-├── apps/                   # 应用入口
+│   ├── prompts.py          # Prompt 模板库（中英双语）
+│   └── orbbec_depth.py     # Orbbec Astra Plus 深度相机 ctypes 封装
+├── apps/                   # 应用入口（3 个）
 │   ├── desktop.py          # Windows/Linux 桌面 GUI 全功能版
 │   ├── headless.py         # Jetson 无头模式主入口（evdev 全局键盘监听）
-│   └── jetson.py           # Jetson 终端键盘兼容版
-├── scripts/                # 测试与诊断脚本
-│   ├── check_system.py     # 一键系统综合诊断
+│   └── jetson.py           # Jetson 终端键盘兼容版（向后兼容）
+├── scripts/                # 测试与诊断脚本（5 个）
+│   ├── check_system.py     # 一键系统综合诊断（8 大类检查）
 │   ├── check_camera.py     # 摄像头扫描与诊断
 │   └── check_audio.py      # 音频设备检测与 TTS 测试
 ├── start.sh                # 一键启动脚本（5 种模式）
-├── archive/                # 历史迭代版本
-├── assets/                 # 静态资源（字体/音频/图片）
-├── docs/                   # 文档
+├── archive/                # 历史迭代版本（11 个文件）
+├── assets/                 # 静态资源（字体/音频）
+├── docs/                   # 技术文档
+├── Log/                    # 运行日志
 ├── requirements.txt        # 通用依赖
 └── requirements-jetson.txt # Jetson 专用依赖
 ```

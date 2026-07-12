@@ -4,6 +4,7 @@
 支持双摄像头架构：POV（镜腿单目）+ FOV（胸前深度相机）
 """
 import os
+import threading
 from .platform import IS_JETSON, IS_WINDOWS
 
 # ==================== 模型配置 ====================
@@ -36,7 +37,9 @@ FOV_CAMERA_CONFIG = {
 CAMERA_CONFIG = POV_CAMERA_CONFIG
 
 # ==================== AI 推理配置 ====================
-AI_IMAGE_SIZE = 288 if IS_JETSON else 448
+# gemma4 图片 token 数约 (size/14)^2，288→约 420 tokens，224→约 256 tokens
+# Jetson 内存有限，用较小尺寸避免 GGML_SCHED_MAX_SPLIT_INPUTS 超限
+AI_IMAGE_SIZE = 224 if IS_JETSON else 448
 JPEG_QUALITY = 70
 TIMEOUT_INFER = 30 if IS_JETSON else 12
 TIMEOUT_ASR = 8
@@ -63,9 +66,17 @@ YOLO_CONFIG = {
     "nms_threshold": 0.45,                # NMS 阈值
     "detect_classes": [0, 1, 2, 3, 5, 7],  # person, bicycle, car, motorcycle, bus, truck
     "detect_interval": 0.1,               # 检测间隔（秒），约 10 FPS
-    "depth_warning_distance": 1.5,        # 深度预警距离（米）
-    "depth_danger_distance": 0.5,         # 深度危险距离（米）
+    "depth_warning_distance": 1.5,        # 深度预警距离（米），无深度相机时的估算值
+    "depth_danger_distance": 0.5,         # 深度危险距离（米），无深度相机时的估算值
     "announce_cooldown": 2.0,             # 播报冷却时间（秒），避免重复播报
+}
+
+# ==================== Orbbec 深度相机配置 ====================
+DEPTH_CONFIG = {
+    "enabled": True,                      # 是否启用深度相机
+    "warning_distance_mm": 1500,          # 预警距离（mm），1.5 米
+    "danger_distance_mm": 500,            # 危险距离（mm），0.5 米
+    "frame_timeout_ms": 50,               # 深度帧获取超时（ms），不宜太大以免阻塞 YOLO 循环
 }
 
 # ==================== 音频配置 ====================
@@ -145,3 +156,9 @@ STATE_TTS = 4
 
 # ==================== 模式名称 ====================
 MODE_NAMES = ["障碍物检测", "文字识别", "人脸检测", "场景描述", "图文问答"]
+
+# ==================== 独占模式信号量 ====================
+# 当 VLM 推理进行时，YOLO 避障线程暂停以释放 GPU 显存
+# 推理完成后恢复 YOLO，避免 GGML_SCHED_MAX_SPLIT_INPUTS 崩溃
+YOLO_PAUSE_EVENT = threading.Event()
+YOLO_PAUSE_EVENT.set()  # 初始状态：未暂停（YOLO 正常运行）

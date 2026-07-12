@@ -1,12 +1,13 @@
 """
 VisionLink 边缘端无头模式入口
-运行于 Jetson Orin Nano，双摄像头协同 + YOLO 避障 + VLM 推理
+运行于 Jetson Orin Nano，双摄像头协同 + YOLO 避障 + Orbbec 深度相机 + VLM 推理
 
 启动方式:
     python apps/headless.py                    # 仅 POV 摄像头
     python apps/headless.py --dual             # 双摄像头模式（POV + FOV）
     python apps/headless.py --yolo             # 启用 YOLO 避障
-    python apps/headless.py --dual --yolo      # 全功能模式
+    python apps/headless.py --dual --yolo      # 全功能模式（双摄 + YOLO）
+    python apps/headless.py --dual --yolo --depth  # 全功能 + Orbbec 真实深度
 """
 import os
 import sys
@@ -24,12 +25,19 @@ import cv2
 os.environ.setdefault("QT_QPA_FONTDIR", "/usr/share/fonts/truetype/dejavu/")
 os.environ.setdefault("QT_LOGGING_RULES", "qt.qpa.fonts=false")
 
+# 在文件描述符层面屏蔽 stderr（fd 2），对 C 扩展也有效
+# 消除 OpenCV libjpeg "Corrupt JPEG data" 等噪音
+# Python logging 走 stdout（fd 1），不受影响
+# 注意: Orbbec SDK 的日志通过 OrbbecSDKConfig.xml (ConsoleLogLevel=5) 控制，
+# 不依赖此处的 stderr 重定向
+os.dup2(os.open(os.devnull, os.O_WRONLY), 2)
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.platform import IS_JETSON, HAS_DISPLAY
 from src.config import (
     MODE_NAMES, SNAPSHOT_DIR, INFER_LOG_DIR, AUDIO_CACHE_DIR,
-    YOLO_CONFIG, STATE_IDLE,
+    YOLO_CONFIG, DEPTH_CONFIG, STATE_IDLE,
 )
 from src.camera import CameraManager, DualCameraManager
 from src.inference import InferenceEngine
@@ -155,6 +163,7 @@ def main():
     parser = argparse.ArgumentParser(description="VisionLink 边缘端无头模式")
     parser.add_argument("--dual", action="store_true", help="启用双摄像头模式 (POV + FOV)")
     parser.add_argument("--yolo", action="store_true", help="启用 YOLO 避障检测（需要 FOV 摄像头）")
+    parser.add_argument("--depth", action="store_true", help="启用 Orbbec 深度相机真实距离测量（需要 --yolo）")
     parser.add_argument("--gui", action="store_true", help="强制启用 GUI 调试窗口")
     parser.add_argument("--model", type=str, default=None, help="指定模型名称")
     args = parser.parse_args()
@@ -163,8 +172,9 @@ def main():
     logger.info("=" * 55)
     logger.info("VisionLink 边缘端启动")
     logger.info(f"平台: {'Jetson Orin Nano' if IS_JETSON else 'Linux Desktop'}")
+    depth_label = " + Orbbec深度" if args.depth else ""
     logger.info(f"模式: {'双摄像头' if args.dual else '单摄像头(POV)'}"
-                f"{' + YOLO避障' if args.yolo else ''}")
+                f"{' + YOLO避障' if args.yolo else ''}{depth_label}")
     logger.info(f"模型: {args.model or '默认'}")
 
     for i, name in enumerate(MODE_NAMES, 1):
@@ -195,6 +205,25 @@ def main():
             logger.error("摄像头初始化失败，退出")
             return
 
+    # 深度相机初始化
+    depth_camera = None
+    if args.depth and args.yolo:
+        try:
+            from src.orbbec_depth import OrbbecDepthCamera, is_available
+            if is_available():
+                depth_camera = OrbbecDepthCamera()
+                if depth_camera.connect():
+                    logger.info("Orbbec 深度相机已启用，YOLO 避障将使用真实距离")
+                else:
+                    logger.warning("Orbbec 深度相机连接失败，回退到位置估算模式")
+                    depth_camera = None
+            else:
+                logger.warning("未检测到 Orbbec SDK，回退到位置估算模式")
+        except Exception as e:
+            logger.warning(f"深度相机初始化异常: {e}，回退到位置估算模式")
+    elif args.depth and not args.yolo:
+        logger.warning("--depth 需要配合 --yolo 使用，深度相机未启用")
+
     # Agent 初始化
     agent = Agent(infer, tts, camera)
     agent._yolo_enabled = args.yolo
@@ -204,6 +233,7 @@ def main():
     if args.yolo and args.dual:
         yolo_detector = YOLODetector(
             camera.fov,
+            depth_camera=depth_camera,
             on_detect=agent.on_yolo_detect
         )
         if not yolo_detector.start():
@@ -325,6 +355,9 @@ def main():
 
         if yolo_detector:
             yolo_detector.stop()
+
+        if depth_camera:
+            depth_camera.stop()
 
         if args.dual:
             camera.release_all()

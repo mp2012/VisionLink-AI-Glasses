@@ -19,6 +19,7 @@ from .config import (
     AGENT_SCAN_INTERVAL, BROADCAST_COOLDOWN, LONG_TIME_LIMIT,
     MAX_CONTEXT_ROUND, STATE_IDLE, STATE_LISTEN, STATE_INFER, STATE_TTS,
     MODE_NAMES, SNAPSHOT_DIR, INFER_LOG_DIR, SPACE_DEBOUNCE,
+    YOLO_PAUSE_EVENT,
 )
 from .prompts import AGENT_PROMPT, TASK_PLAN_PROMPT, TIP_VOICE, PROMPT_LIB
 
@@ -99,10 +100,26 @@ class Agent:
     # ==================== 模式控制 ====================
 
     def set_mode(self, mode_idx: int):
-        """切换功能模式 (1-5)"""
+        """切换功能模式 (1-5)
+
+        模式切换策略：
+        - 模式 1（障碍物检测）：恢复 YOLO 避障线程，确保实时检测
+        - 模式 2~5（文字识别/人脸/场景/问答）：暂停 YOLO 避障线程，
+          释放 GPU 显存和 CUDA 核心，提高 VLM 推理效率
+        """
         if 1 <= mode_idx <= 5:
+            prev_mode = self._current_mode
             self._current_mode = mode_idx
             logger.info(f"切换模式: {mode_idx} - {self.mode_name}")
+
+            # 离开模式 1 时暂停 YOLO，进入模式 1 时恢复 YOLO
+            if prev_mode == 1 and mode_idx != 1:
+                YOLO_PAUSE_EVENT.clear()
+                logger.info("YOLO 避障已暂停（离开障碍检测模式，释放 GPU 资源）")
+            elif prev_mode != 1 and mode_idx == 1:
+                YOLO_PAUSE_EVENT.set()
+                logger.info("YOLO 避障已恢复（进入障碍检测模式）")
+
             self.tts.speak(f"已切换至{self.mode_name}")
 
     def toggle_auto(self) -> bool:
@@ -241,14 +258,43 @@ class Agent:
             return
 
         now = time.time()
-        if now - self._yolo_last_announce < 2.0:
-            return  # 冷却
+
+        # 冷却：piper 播报约需 3-4 秒，8 秒保证不重叠
+        if now - self._yolo_last_announce < 8.0:
+            return
+
+        # 如果 TTS 还在播放，等待播完再发新的
+        if self.tts.is_speaking():
+            return
 
         msg = detection_result.alert_message
         if msg:
+            # 粗粒度去重：提取"方向+距离等级"作为 key，避免"右侧800mm"→"右侧700mm"重复播报
+            # 例如 "右侧近处约800毫米有人" → key="右侧近处"
+            dedup_key = self._extract_obstacle_key(msg)
+            last_key = getattr(self, '_yolo_last_key', '')
+            if dedup_key == last_key:
+                return
+            self._yolo_last_key = dedup_key
+
             self._yolo_last_announce = now
             logger.info(f"YOLO 避障播报: {msg}")
             self.tts.speak(msg)
+
+    @staticmethod
+    def _extract_obstacle_key(msg: str) -> str:
+        """
+        从播报消息中提取去重 key（仅按方向去重）
+        例如：
+          "危险！右侧近处约800毫米有人" → "右侧"
+          "危险！右侧前方约900毫米有人" → "右侧"（同上，跳过）
+          "危险！正前方近处约600毫米有人" → "正前方"
+        """
+        import re
+        m = re.search(r'(正前方|左侧|右侧|左前方|右前方)', msg)
+        if m:
+            return m.group(0)
+        return msg[:6]
 
     def toggle_yolo(self) -> bool:
         """开关 YOLO 避障播报"""
@@ -328,10 +374,23 @@ class Agent:
             logger.error("图像编码失败，推理中止")
             return
 
-        # 推理
-        logger.info(f"推理模式 {mode_idx} ({MODE_NAMES[mode_idx - 1]})，快照: {snapshot_path}")
-        prompt = PROMPT_LIB["zh"][mode_idx - 1]
-        result = self.infer.infer(prompt, img_b64)
+        # 独占模式：确保推理期间 YOLO 避障线程暂停，释放 GPU 显存给 VLM
+        # 注意：set_mode 切换时已经处理了 YOLO 暂停/恢复，此处为双重保险
+        yolo_was_running = YOLO_PAUSE_EVENT.is_set()
+        if yolo_was_running:
+            YOLO_PAUSE_EVENT.clear()
+            logger.debug("YOLO 避障已暂停（VLM 推理独占 GPU）")
+
+        try:
+            # 推理
+            logger.info(f"推理模式 {mode_idx} ({MODE_NAMES[mode_idx - 1]})，快照: {snapshot_path}")
+            prompt = PROMPT_LIB["zh"][mode_idx - 1]
+            result = self.infer.infer(prompt, img_b64)
+        finally:
+            # 推理完成后，仅在障碍检测模式下恢复 YOLO
+            if yolo_was_running and self._current_mode == 1:
+                YOLO_PAUSE_EVENT.set()
+                logger.debug("YOLO 避障已恢复")
 
         if result:
             # 保存推理日志

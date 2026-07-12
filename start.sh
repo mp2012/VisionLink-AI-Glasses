@@ -4,7 +4,9 @@
 #   默认:      ./start.sh            → 单摄像头 POV
 #   双摄:      ./start.sh dual       → POV + FOV 双摄像头
 #   全功能:    ./start.sh full       → 双摄 + YOLO 避障
+#   深度避障:  ./start.sh depth      → 双摄 + YOLO + Orbbec 真实深度
 #   桌面:      ./start.sh desktop    → GUI 桌面模式
+#   GUI调试:   ./start.sh gui        → 无头模式 + GUI 调试窗口
 
 set -e
 cd "$(dirname "$0")"
@@ -37,6 +39,10 @@ case "$MODE" in
     full)
         echo "启动 VisionLink - 全功能模式（双摄 + YOLO 避障）..."
         python apps/headless.py --dual --yolo
+        ;;
+    depth)
+        echo "启动 VisionLink - 深度避障模式（双摄 + YOLO + Orbbec 真实深度）..."
+        python apps/headless.py --dual --yolo --depth
         ;;
     desktop)
         echo "启动 VisionLink - 桌面 GUI 模式..."

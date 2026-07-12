@@ -93,12 +93,12 @@ The project spans a complete full-stack development path, ranging from **PC prot
 
 | Hardware Module | Reference Image | Core Specifications & System Function |
 | :--- | :---: | :--- |
-| **First-Person Vision (POV)**<br>Head-tracked Single-Lens Glasses | <img src="images/1%20(2).jpg" width="180" alt="Micro Camera on Glasses Frame"/> | **Micro Type-C Camera Module**<br>• Ultra-lightweight, clips seamlessly onto regular glasses frames, allowing the viewpoint to follow head movements naturally.<br>• Responsible for flexible interactive scenarios (text OCR, traffic light recognition, specific object identification, and general knowledge Q&A). |
-| **Edge Computing Brain** | <img src="images/1%20(3).jpg" width="180" alt="Jetson Orin Nano"/> | **NVIDIA Jetson Orin Nano Dev Kit (8GB)**<br>• The portable core of the system, housed safely in the backpack/chest pack.<br>• Delivers up to 40 TOPS of AI compute, perfectly running the quantized edge-side large language models. |
-| **Third-Person Vision (FOV)**<br>Chest-Mounted Depth Camera | <img src="images/1%20(7).jpg" width="180" alt="Depth Camera"/> | **Orbbec Astra Plus / Micro HD Camera Assembly**<br>• Embedded and secured into a 4-point tactical chest rig to maintain a stable horizontal viewpoint.<br>• Outputs real-time 3D Depth Maps, dedicated to path navigation, drop-off detection, and low-lying obstacle avoidance. |
-| **Audio Output System** | <img src="images/1%20(4).jpg" width="180" alt="Ear-clip Micro Headphones"/> | **Ear-clip Open-Ear Micro Headphones**<br>• Open-ear design delivers private AI voice feedback without blocking ambient environmental sounds, keeping visually impaired users safe. |
-| **Power Supply System** | <img src="images/1%20(1).jpg" width="180" alt="High-power Power Bank"/> | **High-Output PD Fast-Charging Power Bank (20000mAh / 165W)**<br>• Ergonomic weight distribution design, ensuring over 6 hours of continuous operation for the edge computer under high-throughput inference loads. |
-| **Power Decoy Cable** | <img src="images/1%20(6).jpg" width="180" alt="DC Decoy Cable"/> | **Type-C to DC High-Current Decoy Cable**<br>• Built-in PD fast-charging protocol decoy chip, perfectly regulating and stabilizing the power bank's output voltage to match the Jetson motherboard standards. |
+| **First-Person Vision (POV)**<br>Head-tracked Single-Lens Glasses | <img src="images/hardware/1%20(2).jpg" width="180" alt="Micro Camera on Glasses Frame"/> | **Micro Type-C Camera Module**<br>• Ultra-lightweight, clips seamlessly onto regular glasses frames, allowing the viewpoint to follow head movements naturally.<br>• Responsible for flexible interactive scenarios (text OCR, traffic light recognition, specific object identification, and general knowledge Q&A). |
+| **Edge Computing Brain** | <img src="images/hardware/1%20(3).jpg" width="180" alt="Jetson Orin Nano"/> | **NVIDIA Jetson Orin Nano Dev Kit (8GB)**<br>• The portable core of the system, housed safely in the backpack/chest pack.<br>• Delivers up to 40 TOPS of AI compute, perfectly running the quantized edge-side large language models. |
+| **Third-Person Vision (FOV)**<br>Chest-Mounted Depth Camera | <img src="images/hardware/1%20(7).jpg" width="180" alt="Depth Camera"/> | **Orbbec Astra Plus / Micro HD Camera Assembly**<br>• Embedded and secured into a 4-point tactical chest rig to maintain a stable horizontal viewpoint.<br>• Outputs real-time 3D Depth Maps, dedicated to path navigation, drop-off detection, and low-lying obstacle avoidance. |
+| **Audio Output System** | <img src="images/hardware/1%20(4).jpg" width="180" alt="Ear-clip Micro Headphones"/> | **Ear-clip Open-Ear Micro Headphones**<br>• Open-ear design delivers private AI voice feedback without blocking ambient environmental sounds, keeping visually impaired users safe. |
+| **Power Supply System** | <img src="images/hardware/1%20(1).jpg" width="180" alt="High-power Power Bank"/> | **High-Output PD Fast-Charging Power Bank (20000mAh / 165W)**<br>• Ergonomic weight distribution design, ensuring over 6 hours of continuous operation for the edge computer under high-throughput inference loads. |
+| **Power Decoy Cable** | <img src="images/hardware/1%20(6).jpg" width="180" alt="DC Decoy Cable"/> | **Type-C to DC High-Current Decoy Cable**<br>• Built-in PD fast-charging protocol decoy chip, perfectly regulating and stabilizing the power bank's output voltage to match the Jetson motherboard standards. |
 
 ---
 
@@ -106,7 +106,7 @@ The project spans a complete full-stack development path, ranging from **PC prot
 
 ```text
 VisionLink/
-├── src/                    # Core Source Code (Cross-platform)
+├── src/                    # Core Source Code (Cross-platform, 10 modules)
 │   ├── platform.py         # Platform detection & environment adaptation
 │   ├── config.py           # Unified configuration center
 │   ├── camera.py           # Dual camera management (POV glasses + FOV chest)
@@ -115,19 +115,21 @@ VisionLink/
 │   ├── tts.py              # TTS synthesis (Piper > espeak-ng > edge-tts fallback)
 │   ├── ui.py               # UI rendering (YOLO overlay, auto-adapts to headless mode)
 │   ├── agent.py            # Core controller (state machine / auto mode / YOLO callback)
-│   └── prompts.py          # Prompt template library (CN/EN bilingual)
-├── apps/                   # Application Entries
+│   ├── prompts.py          # Prompt template library (CN/EN bilingual)
+│   └── orbbec_depth.py     # Orbbec Astra Plus depth camera ctypes wrapper
+├── apps/                   # Application Entries (3)
 │   ├── desktop.py          # Windows/Linux Desktop GUI full-featured edition
 │   ├── headless.py         # Jetson headless mode (evdev global keyboard listener)
-│   └── jetson.py           # Jetson terminal keyboard compatible edition
-├── scripts/                # Diagnostic & testing scripts
-│   ├── check_system.py     # One-click system comprehensive diagnostic
+│   └── jetson.py           # Jetson terminal keyboard compatible (backward compat)
+├── scripts/                # Diagnostic & testing scripts (5)
+│   ├── check_system.py     # One-click system comprehensive diagnostic (8 categories)
 │   ├── check_camera.py     # Camera scanning & diagnostic
 │   └── check_audio.py      # Audio device detection & TTS test
 ├── start.sh                # One-click launcher (5 modes)
-├── archive/                # Legacy iteration history
-├── assets/                 # Static resources (Fonts, Audio, Images)
-├── docs/                   # Documentation
+├── archive/                # Legacy iteration history (11 files)
+├── assets/                 # Static resources (Fonts, Audio)
+├── docs/                   # Technical documentation
+├── Log/                    # Runtime logs
 ├── requirements.txt        # Universal dependencies
 └── requirements-jetson.txt # Jetson-specific dependencies
 ```

@@ -96,7 +96,12 @@ class TTSEngine:
             self.stop()
             clean_text = text.replace("\n", " ").replace("\r", " ").replace("\t", " ")
             clean_text = " ".join(clean_text.split())
-            logger.info(f"播放语音 [{self._tts_method}]: {clean_text[:60]}...")
+
+            # 确定实际使用的引擎（piper 遇到英文会切 espeak）
+            actual_method = self._tts_method
+            if IS_JETSON and actual_method == "piper" and self._is_mostly_english(clean_text):
+                actual_method = "espeak(en)"
+            logger.info(f"播放语音 [{actual_method}]: {clean_text[:60]}...")
 
             try:
                 with self._lock:
@@ -113,15 +118,29 @@ class TTSEngine:
         threading.Thread(target=_worker, daemon=True).start()
 
     def stop(self):
-        """强制终止当前语音"""
+        """强制终止当前语音（包括杀掉占用音频设备的 aplay 进程）"""
         with self._lock:
             if self._process is not None:
                 try:
-                    self._process.terminate()
+                    # 先杀 shell 进程组（包括管道中的所有子进程）
+                    pid = self._process.pid
+                    if pid:
+                        try:
+                            # kill 整个进程组，确保 aplay 也被杀掉
+                            os.killpg(os.getpgid(pid), 2)  # SIGINT
+                            time.sleep(0.1)
+                            os.killpg(os.getpgid(pid), 9)  # SIGKILL 兜底
+                        except (ProcessLookupError, OSError):
+                            pass
                     self._process.wait(timeout=1.0)
                     logger.debug("已终止上一条语音")
                 except Exception as e:
                     logger.warning(f"终止语音异常: {e}")
+                    # 暴力兜底：直接杀所有 aplay 进程
+                    try:
+                        os.system("pkill -9 aplay 2>/dev/null")
+                    except Exception:
+                        pass
                 self._process = None
 
     def mute(self):
@@ -219,13 +238,36 @@ class TTSEngine:
             f'$synth.Rate = -2;'
             f'$synth.Speak(\'{safe_text}\')"'
         )
-        return subprocess.Popen(cmd, shell=True)
+        return subprocess.Popen(
+            cmd, shell=True,
+            preexec_fn=os.setsid if hasattr(os, 'setsid') else None
+        )
 
     # ==================== Jetson TTS 实现 ====================
+
+    @staticmethod
+    def _is_mostly_english(text: str) -> bool:
+        """
+        判断文本是否主要为英文
+        当英文/数字/符号占比超过 60% 时，认为需要英文 TTS 引擎
+        """
+        if not text:
+            return False
+        en_count = sum(1 for c in text if c.isascii() and c.isalpha())
+        total_alpha = sum(1 for c in text if c.isalpha())
+        if total_alpha == 0:
+            return False
+        return (en_count / total_alpha) > 0.6
 
     def _speak_jetson(self, text: str):
         """Jetson TTS：piper > espeak-ng > edge-tts 自动选择"""
         method = self._tts_method or "piper"
+
+        # piper 中文模型朗读英文会乱说，自动切换到 espeak（英文支持好）
+        if method == "piper" and self._is_mostly_english(text):
+            if self._check_cmd("espeak-ng --help"):
+                logger.debug("检测到英文文本，自动切换 espeak-ng 播报")
+                return self._speak_espeak_english(text)
 
         if method == "piper":
             return self._speak_piper(text)
@@ -239,7 +281,6 @@ class TTSEngine:
         """
         Piper TTS（离线，音质好）
         流程：piper 合成 raw PCM → ffmpeg 转 wav → aplay 直连 ALSA 播放
-        分两步生成+播放，避免管道中 aplay 提前读取导致声道数据不完整
         """
         tmp_wav = f"/tmp/tts_{time.time_ns()}.wav"
         safe_text = text.replace("\\", "\\\\").replace('"', '\\"').replace("`", "\\`")
@@ -254,13 +295,15 @@ class TTSEngine:
             f"aplay -D {audio_device} -q {tmp_wav} 2>/dev/null; "
             f"rm -f {tmp_wav}"
         )
-        return subprocess.Popen(cmd, shell=True, executable="/bin/bash")
+        return subprocess.Popen(
+            cmd, shell=True, executable="/bin/bash",
+            preexec_fn=os.setsid  # 创建新进程组，方便 killpg
+        )
 
     @staticmethod
     def _speak_espeak(text: str) -> Optional[subprocess.Popen]:
         """
-        eSpeak-NG TTS（离线，轻量回退）
-        流程：espeak-ng 合成 wav → aplay 直连 ALSA 播放
+        eSpeak-NG TTS（离线，轻量回退）- 中文
         """
         tmp_wav = f"/tmp/tts_{time.time_ns()}.wav"
         safe_text = text.replace("\\", "\\\\").replace('"', '\\"').replace("`", "\\`")
@@ -270,7 +313,29 @@ class TTSEngine:
             f"aplay -D {audio_device} -q {tmp_wav} 2>/dev/null; "
             f"rm -f {tmp_wav}"
         )
-        return subprocess.Popen(cmd, shell=True, executable="/bin/bash")
+        return subprocess.Popen(
+            cmd, shell=True, executable="/bin/bash",
+            preexec_fn=os.setsid
+        )
+
+    @staticmethod
+    def _speak_espeak_english(text: str) -> Optional[subprocess.Popen]:
+        """
+        eSpeak-NG TTS - 英文模式
+        piper 中文模型遇到英文会乱说，自动切换到此方法
+        """
+        tmp_wav = f"/tmp/tts_{time.time_ns()}.wav"
+        safe_text = text.replace("\\", "\\\\").replace('"', '\\"').replace("`", "\\`")
+        audio_device = AUDIO_DEVICE or "plughw:1,0"
+        cmd = (
+            f'espeak-ng -v en-us "{safe_text}" -w {tmp_wav} -s 150 2>/dev/null && '
+            f"aplay -D {audio_device} -q {tmp_wav} 2>/dev/null; "
+            f"rm -f {tmp_wav}"
+        )
+        return subprocess.Popen(
+            cmd, shell=True, executable="/bin/bash",
+            preexec_fn=os.setsid
+        )
 
     @staticmethod
     def _speak_edge(text: str) -> Optional[subprocess.Popen]:
