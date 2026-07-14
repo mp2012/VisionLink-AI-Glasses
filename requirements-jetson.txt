@@ -6,10 +6,25 @@ numpy>=1.24.0
 
 # Jetson 专用
 edge-tts>=6.0.0
+evdev>=1.6.0
 
 # 可选：语音识别（语音交互模式）
 # speech_recognition>=3.10.0
 
+# 可选：Web 深度预览（--depth 模式下局域网浏览器预览深度画面）
+# flask>=3.0.0
+
 # 可选：YOLO 目标检测（需要先安装 PyTorch for Jetson）
 # 参考: https://docs.ultralytics.com/guides/nvidia-jetson/
 # ultralytics>=8.0.0
+#
+# 性能优化：导出 TensorRT 引擎以获得 5-10x 加速
+#   python scripts/export_yolo_trt.py
+# 前置依赖（JetPack 预装）:
+#   - PyTorch for Jetson  (JetPack 预装)
+#   - TensorRT >= 8.5    (JetPack 预装)
+#   - CUDA >= 11.4       (JetPack 预装)
+# 额外 pip 依赖:
+#   - onnx               (pip install onnx)
+#   - onnxsim            (pip install onnxsim, 可选但推荐)
+# 导出后在 detection.py 中自动加载 .engine 文件，失败则回退 .pt

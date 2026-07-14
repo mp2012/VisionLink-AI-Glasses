@@ -9,6 +9,7 @@ Ollama 多模态推理模块
 - Jetson 超时兜底机制
 """
 import time
+import re
 import base64
 import logging
 import threading
@@ -116,6 +117,7 @@ class InferenceEngine:
                 return ""
             self._state = STATE_INFER
 
+        t_start = time.time()
         try:
             logger.info(f"开始调用模型推理 [{self.model_name}]")
 
@@ -133,7 +135,9 @@ class InferenceEngine:
                 model=self.model_name,
                 messages=messages,
                 options=INFER_OPTIONS,
+                keep_alive=-1,  # -1 = 模型常驻内存，避免每次冷加载（Jetson 30-50s 延迟的根因）
             )
+            latency_ms = (time.time() - t_start) * 1000
             msg = resp.get("message", {})
             result = msg.get("content", "").strip()
 
@@ -141,63 +145,94 @@ class InferenceEngine:
             if not result:
                 thinking = msg.get("thinking", "").strip()
                 if thinking:
-                    # thinking 以 "Thinking Process:" 开头，实际答案在末尾
-                    # 尝试提取 thinking 后的最终输出部分
-                    result = self._extract_final_answer(thinking)
-                    logger.info(f"推理完成 (thinking提取, 长度={len(result)}): {repr(result[:120])}")
-                    return result
+                    extracted = self._extract_final_answer(thinking)
+                    if extracted:
+                        logger.info(f"推理完成 (thinking提取, 长度={len(extracted)}): {repr(extracted[:120])}")
+                        self._log_inference_dashboard(extracted, True, latency_ms)
+                        return extracted
+                    else:
+                        # thinking 未正常结束，丢弃草稿，不播英文内部推理流程
+                        logger.warning(
+                            f"thinking 未正常结束，丢弃草稿 (thinking长度={len(thinking)}): "
+                            f"{repr(thinking[:80])}"
+                        )
+                        self._log_inference_dashboard("", False, latency_ms)
+                        return ""
 
             logger.info(f"推理完成 (长度={len(result)}): {repr(result[:120])}")
+            self._log_inference_dashboard(result, True, latency_ms)
             return result
 
         except ollama.ResponseError as e:
             logger.error(f"Ollama 响应错误: {e}")
+            self._log_inference_dashboard("", False, 0)
             return ""
         except Exception as e:
             logger.error(f"推理异常: {e}")
+            self._log_inference_dashboard("", False, 0)
             return ""
         finally:
             self._state = STATE_IDLE
+
+    @staticmethod
+    def _log_inference_dashboard(text: str, success: bool, latency_ms: float):
+        """仪表板打点：记录推理结果与 Ollama 连接状态"""
+        try:
+            from src.dashboard_status import system_status
+            if success:
+                system_status.set_ollama_connected(True)
+            else:
+                system_status.set_ollama_connected(False)
+            system_status.log_inference(text, success, latency_ms)
+        except ImportError:
+            pass
 
     @staticmethod
     def _extract_final_answer(thinking_text: str) -> str:
         """
         从 thinking 模型的推理过程中提取最终答案
 
-        gemma4 thinking 模型的输出格式：
-            ...大量推理过程...
+        gemma4 实际输出格式多样：
+            ...推理过程...
             ...done thinking.
-            (空行)
-            实际答案内容
+            实际答案
+
+            ...推理过程...
+            *(Self-Correction ...)*  The answer should be...
+            实际答案（中文）
 
         策略：
-        1. 优先找 "...done thinking." 之后的文本
-        2. 回退：跳过推理步骤段落，取最后一个非推理段落
-        3. 最终回退：取最后 300 字符
+        1. 找 "...done thinking." 标记后的内容
+        2. 剔除 *(Self-Correction ...)* 等元注释块
+        3. 优先返回含中文的末段（最可能是用户能懂的答案）
+        4. 最终回退：取最后 300 字符
         """
         text = thinking_text
 
-        # 策略1：找 "...done thinking." 标记后的内容（gemma4 特有格式）
+        # 策略1：找 "...done thinking." 标记后的内容
         for marker in ["...done thinking.", "Done thinking.", "done thinking"]:
             idx = text.lower().find(marker.lower())
             if idx != -1:
                 after = text[idx + len(marker):].strip()
                 if after:
-                    logger.debug(f"从 thinking 标记后提取: {repr(after[:80])}")
-                    return after
+                    cleaned = InferenceEngine._clean_meta_commentary(after)
+                    logger.debug(f"从 thinking 标记后提取: {repr(cleaned[:80])}")
+                    return cleaned
 
-        # 移除 "Thinking Process:" 前缀
-        for prefix in ["Thinking Process:", "thinking process:"]:
-            if text.lower().startswith(prefix.lower()):
-                text = text[len(prefix):].strip()
-                break
+        # 策略2：剔除 *(Self-Correction...)* 之类的元注释块
+        text = InferenceEngine._clean_meta_commentary(text)
 
-        # 按双换行分段
+        # 策略3：按双换行分段，优先取含中文的最后一段
         paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
         if not paragraphs:
-            return text[:200]
+            return ""
 
-        # 跳过明显的推理步骤段落
+        # 先找包含中文的最后一段（这最可能是用户要的答案）
+        cn_paragraphs = [p for p in paragraphs if re.search(r'[\u4e00-\u9fff]', p)]
+        if cn_paragraphs:
+            return cn_paragraphs[-1]
+
+        # 无中文段落时：跳过推理步骤，取最后一段
         skip_patterns = (
             "1.", "2.", "3.", "4.", "5.", "6.", "7.", "8.", "9.",
             "- ", "* ", "**",
@@ -205,6 +240,7 @@ class InferenceEngine:
             "thinking process", "step ", "option ", "approach",
             "therefore", "thus", "so the", "this means",
             "key observation", "key insight", "final output",
+            "the resulting", "the image shows", "the scene",
         )
         final_paragraphs = []
         for p in paragraphs:
@@ -215,13 +251,25 @@ class InferenceEngine:
 
         if final_paragraphs:
             result = final_paragraphs[-1]
-            # 如果提取结果仍然像推理过程，取最后 300 字符
-            if any(w in result.lower()[:60] for w in ("thinking", "process", "step", "approach")):
-                return text[-300:].strip()
+            # 检查是否仍然是推理步骤文本（开头包含 thinking/step/approach 等关键词）
+            if any(w in result.lower()[:60] for w in ("thinking", "process", "step", "approach", "drafting", "option", "internal")):
+                return ""
             return result
 
-        # 回退：取整个文本的最后 300 字符
-        return text[-300:].strip()
+        # 所有策略均失败 → thinking 未正常结束，不返回草稿
+        return ""
+
+    @staticmethod
+    def _clean_meta_commentary(text: str) -> str:
+        """
+        剔除 thinking 模型输出的元注释，如：
+        *(Self-Correction during translation: ...)* The resulting descriptions should...
+        """
+        # 移除 *( ... )* 样式的内省注释
+        text = re.sub(r'\*\([^)]*\)\*', '', text)
+        # 移除行首的 *( ... )* 直到下一个句号结束的元句子
+        text = re.sub(r'^\*\([^)]*\)\*\s*[A-Z][^。.!！?\n]{20,200}[.!]\s*', '', text, flags=re.MULTILINE)
+        return text.strip()
 
     def infer_async(
         self,
@@ -253,12 +301,11 @@ class InferenceEngine:
         t = threading.Thread(target=_worker, daemon=True)
         t.start()
 
-        # Jetson 环境需要超时兜底
+        # Jetson 环境需要超时兜底（仅告警，不重置状态）
+        # 状态由 infer() 的 finally 块在线程结束后自然重置
         if IS_JETSON:
             t.join(timeout=TIMEOUT_INFER)
             if t.is_alive():
-                logger.warning(f"推理超时 {TIMEOUT_INFER}s，强制释放")
-                with self._lock:
-                    self._state = STATE_IDLE
+                logger.warning(f"推理超时 {TIMEOUT_INFER}s，等待后台线程完成")
 
         return t

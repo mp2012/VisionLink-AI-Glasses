@@ -28,8 +28,10 @@ os.environ.setdefault("QT_LOGGING_RULES", "qt.qpa.fonts=false")
 # 在文件描述符层面屏蔽 stderr（fd 2），对 C 扩展也有效
 # 消除 OpenCV libjpeg "Corrupt JPEG data" 等噪音
 # Python logging 走 stdout（fd 1），不受影响
+# 注意: stderr 在 main() 的 finally 块中恢复，确保程序退出前错误不丢失
 # 注意: Orbbec SDK 的日志通过 OrbbecSDKConfig.xml (ConsoleLogLevel=5) 控制，
 # 不依赖此处的 stderr 重定向
+_original_stderr_fd = os.dup(2)
 os.dup2(os.open(os.devnull, os.O_WRONLY), 2)
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -38,13 +40,16 @@ from src.platform import IS_JETSON, HAS_DISPLAY
 from src.config import (
     MODE_NAMES, SNAPSHOT_DIR, INFER_LOG_DIR, AUDIO_CACHE_DIR,
     YOLO_CONFIG, DEPTH_CONFIG, STATE_IDLE,
+    WEB_PREVIEW_PORT, YOLO_PAUSE_EVENT, AUDIO_DEVICE,
 )
 from src.camera import CameraManager, DualCameraManager
 from src.inference import InferenceEngine
 from src.tts import TTSEngine
 from src.agent import Agent
 from src.ui import UIManager
+from src.prompts import TIP_VOICE
 from src.detection import YOLODetector
+from src.volume_control import VolumeController
 
 # ==================== 日志配置 ====================
 sys.stdout.reconfigure(encoding="utf-8")
@@ -188,6 +193,7 @@ def main():
     infer = InferenceEngine(model_name=args.model)
     tts = TTSEngine()
     ui = UIManager(enable_gui=args.gui)
+    vol_ctrl = VolumeController(audio_device=AUDIO_DEVICE)
 
     # 摄像头初始化
     if args.dual:
@@ -207,6 +213,11 @@ def main():
 
     # 深度相机初始化
     depth_camera = None
+    web_preview = None
+    _latest_pov_for_web = None  # web 预览线程共享的 POV 帧
+    _latest_fov_for_web = None  # web 预览线程共享的 FOV 帧
+    _web_lock = threading.Lock()
+
     if args.depth and args.yolo:
         try:
             from src.orbbec_depth import OrbbecDepthCamera, is_available
@@ -214,9 +225,94 @@ def main():
                 depth_camera = OrbbecDepthCamera()
                 if depth_camera.connect():
                     logger.info("Orbbec 深度相机已启用，YOLO 避障将使用真实距离")
+                    try:
+                        from src.dashboard_status import system_status
+                        system_status.set_depth_camera_ok(True)
+                    except ImportError:
+                        pass
+
+                    # 启动 Web 预览
+                    try:
+                        from src.web_preview import WebPreview
+                        web_preview = WebPreview(port=WEB_PREVIEW_PORT)
+
+                        # 帧提供者：合并 POV + FOV 彩色帧 + 深度伪彩色图（三路拼接）
+                        _preview_logged = False
+
+                        def make_preview_frame():
+                            nonlocal _preview_logged
+                            import numpy as _np
+                            try:
+                                with _web_lock:
+                                    pov = _latest_pov_for_web
+                                    fov = _latest_fov_for_web
+                                    if pov is not None:
+                                        pov = pov.copy()
+                                    if fov is not None:
+                                        fov = fov.copy()
+
+                                depth_colormap = depth_camera.get_latest_depth_colormap()
+
+                                # 收集可用面板
+                                panels = []
+                                labels = []
+
+                                if pov is not None:
+                                    panels.append(pov)
+                                    labels.append("POV")
+
+                                if fov is not None:
+                                    panels.append(fov)
+                                    labels.append("FOV")
+
+                                if depth_colormap is not None:
+                                    panels.append(depth_colormap)
+                                    labels.append("DEPTH")
+
+                                if not panels:
+                                    return None
+
+                                # 统一到同一高度
+                                target_h = min(p.shape[0] for p in panels)
+                                for i, p in enumerate(panels):
+                                    h, w = p.shape[:2]
+                                    if h != target_h:
+                                        panels[i] = cv2.resize(p, (int(w * target_h / h), target_h))
+
+                                # 水平拼接
+                                combined = _np.hstack(panels) if len(panels) > 1 else panels[0]
+
+                                # 标注每个面板
+                                x_offset = 0
+                                for i, (panel, label) in enumerate(zip(panels, labels)):
+                                    cv2.putText(combined, label, (x_offset + 8, 22),
+                                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+                                    x_offset += panel.shape[1]
+
+                                if not _preview_logged:
+                                    _preview_logged = True
+                                    dims = " + ".join(f"{l}:{p.shape[1]}x{p.shape[0]}" for l, p in zip(labels, panels))
+                                    logger.info(f"Web 预览帧就绪: {combined.shape[1]}x{combined.shape[0]} ({dims})")
+                                return combined
+                            except Exception as e:
+                                if not _preview_logged:
+                                    _preview_logged = True
+                                    logger.warning(f"Web 预览帧生成失败: {e}")
+                                return None
+
+                        web_preview.set_frame_provider(make_preview_frame)
+                        if web_preview.start():
+                            logger.info(f"Web 预览: http://0.0.0.0:{WEB_PREVIEW_PORT}")
+                    except Exception as e:
+                        logger.warning(f"Web 预览启动失败: {e}")
                 else:
                     logger.warning("Orbbec 深度相机连接失败，回退到位置估算模式")
                     depth_camera = None
+                    try:
+                        from src.dashboard_status import system_status
+                        system_status.set_depth_camera_ok(False)
+                    except ImportError:
+                        pass
             else:
                 logger.warning("未检测到 Orbbec SDK，回退到位置估算模式")
         except Exception as e:
@@ -226,7 +322,7 @@ def main():
 
     # Agent 初始化
     agent = Agent(infer, tts, camera)
-    agent._yolo_enabled = args.yolo
+    agent.yolo_enabled = args.yolo
 
     # YOLO 检测器初始化
     yolo_detector = None
@@ -244,7 +340,19 @@ def main():
         args.yolo = False
 
     # 启动语音
-    tts.speak("项目启动")
+    tts.speak(TIP_VOICE["zh"]["start"])
+    vol_ctrl.start()
+
+    # ── 仪表板初始状态打点 ──
+    try:
+        from src.dashboard_status import system_status
+        system_status.set_yolo_enabled(args.yolo)
+        system_status.set_yolo_running(args.yolo)
+        system_status.set_ollama_connected(True)
+        system_status.set_dual_camera(args.dual)
+        system_status.set_mode(agent.current_mode, agent.mode_name)
+    except ImportError:
+        pass
 
     # ==================== 全局键盘设置 ====================
     keyboard = GlobalKeyboard()
@@ -282,6 +390,14 @@ def main():
             if not pov_ret or pov_frame is None:
                 time.sleep(0.05)
                 continue
+
+            # 更新 Web 预览共享帧（POV + FOV + 深度）
+            if web_preview:
+                with _web_lock:
+                    if pov_ret and pov_frame is not None:
+                        _latest_pov_for_web = pov_frame.copy()
+                    if fov_ret and fov_frame is not None:
+                        _latest_fov_for_web = fov_frame.copy()
 
             now = time.time()
 
@@ -333,7 +449,7 @@ def main():
                 if yolo_detector is not None:
                     agent.toggle_yolo()
                 else:
-                    tts.speak("YOLO 避障未启用，请使用 --dual --yolo 启动")
+                    tts.speak(TIP_VOICE["zh"].get("yolo_not_enabled", "YOLO 避障未启用，请使用 --dual --yolo 启动"))
                 continue
 
             # ---- S/s：停止语音 ----
@@ -359,6 +475,9 @@ def main():
         if depth_camera:
             depth_camera.stop()
 
+        if web_preview:
+            web_preview.stop()
+
         if args.dual:
             camera.release_all()
         else:
@@ -366,7 +485,14 @@ def main():
 
         ui.destroy()
         tts.stop()
+        vol_ctrl.stop()
         agent.shutdown()
+
+        # 恢复 stderr，确保退出前错误不静默丢失
+        if _original_stderr_fd is not None:
+            os.dup2(_original_stderr_fd, 2)
+            os.close(_original_stderr_fd)
+
         logger.info("程序结束")
 
 

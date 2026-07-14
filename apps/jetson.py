@@ -21,12 +21,14 @@ os.environ.setdefault("QT_LOGGING_RULES", "qt.qpa.fonts=false")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.platform import IS_JETSON, HAS_DISPLAY
-from src.config import MODE_NAMES, SNAPSHOT_DIR, INFER_LOG_DIR, AUDIO_CACHE_DIR
+from src.config import MODE_NAMES, SNAPSHOT_DIR, INFER_LOG_DIR, AUDIO_CACHE_DIR, AUDIO_DEVICE
 from src.camera import CameraManager
 from src.inference import InferenceEngine
 from src.tts import TTSEngine
 from src.agent import Agent
+from src.prompts import TIP_VOICE
 from src.ui import UIManager
+from src.volume_control import VolumeController
 
 # ==================== 日志配置 ====================
 sys.stdout.reconfigure(encoding="utf-8")
@@ -48,6 +50,7 @@ infer = InferenceEngine()
 tts = TTSEngine()
 ui = UIManager()
 ui.enable_gui = False
+vol_ctrl = VolumeController(audio_device=AUDIO_DEVICE)
 agent = Agent(infer, tts, camera)
 
 
@@ -73,7 +76,8 @@ def main():
         logger.error("摄像头初始化失败")
         return
 
-    tts.speak("项目启动")
+    tts.speak(TIP_VOICE["zh"]["start"])
+    vol_ctrl.start()
 
     use_terminal = sys.stdin.isatty()
     if use_terminal:
@@ -126,6 +130,7 @@ def main():
         camera.release()
         ui.destroy()
         tts.stop()
+        vol_ctrl.stop()
         agent.shutdown()
         logger.info("程序结束")
 

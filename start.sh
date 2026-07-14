@@ -11,6 +11,9 @@
 set -e
 cd "$(dirname "$0")"
 
+# 清理 Orbbec SDK 残留日志文件
+rm -f OrbbecSDK.log.txt
+
 # 激活虚拟环境（如果存在）
 if [ -f venv/bin/activate ]; then
     source venv/bin/activate

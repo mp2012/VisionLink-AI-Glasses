@@ -18,7 +18,8 @@ from PIL import Image, ImageDraw, ImageFont
 
 from .platform import IS_JETSON, IS_WINDOWS, HAS_DISPLAY
 from .config import UI_PANEL_WIDTH, UI_ALPHA, UI_YOLO_BOX_COLOR, UI_DANGER_COLOR, UI_WARNING_COLOR
-from .config import MODE_NAMES, FONT_PATHS, FONT_SIZES, STATE_IDLE, STATE_INFER, STATE_TTS
+from .config import FONT_PATHS, FONT_SIZES, STATE_IDLE, STATE_INFER, STATE_TTS
+from .prompts import STATE_NAME_LIST, MODE_NAME_LIST
 
 logger = logging.getLogger(__name__)
 
@@ -195,26 +196,30 @@ class UIManager:
             STATE_INFER: (0, 255, 255),
             STATE_TTS: (0, 255, 0),
         }
-        state_names = {STATE_IDLE: "空闲", STATE_INFER: "推理中", STATE_TTS: "播报中"}
+        state_names = {STATE_IDLE: STATE_NAME_LIST[lang][STATE_IDLE], STATE_INFER: STATE_NAME_LIST[lang][STATE_INFER], STATE_TTS: STATE_NAME_LIST[lang][STATE_TTS]}
         color = state_colors.get(state, (100, 100, 100))
-        state_text = state_names.get(state, "未知")
+        state_fallback = "未知" if lang == "zh" else "Unknown"
+        state_text = state_names.get(state, state_fallback)
         draw.text((x_base, y), f"● {state_text}", fill=color, font=self._font)
         y += 25
 
         # 当前模式
-        mode_name = MODE_NAMES[mode - 1] if 1 <= mode <= 5 else "未知"
-        draw.text((x_base, y), f"模式: {mode_name}", fill=(255, 255, 255), font=self._font)
+        unknown_label = "未知" if lang == "zh" else "Unknown"
+        mode_name = MODE_NAME_LIST[lang][mode - 1] if 1 <= mode <= 5 else unknown_label
+        mode_label = "模式:" if lang == "zh" else "Mode:"
+        draw.text((x_base, y), f"{mode_label} {mode_name}", fill=(255, 255, 255), font=self._font)
         y += 25
 
         # 自动模式
-        auto_text = "自动: ON" if auto_enabled else "自动: OFF"
+        auto_labels = {"zh": {"on": "自动: ON", "off": "自动: OFF"}, "en": {"on": "Auto: ON", "off": "Auto: OFF"}}
+        auto_text = auto_labels[lang]["on"] if auto_enabled else auto_labels[lang]["off"]
         auto_color = (0, 255, 0) if auto_enabled else (150, 150, 150)
         draw.text((x_base, y), auto_text, fill=auto_color, font=self._font)
         y += 25
 
         # 语种
-        lang_text = "EN" if lang == "en" else "中文"
-        draw.text((x_base, y), f"语言: {lang_text}", fill=(200, 200, 200), font=self._font)
+        lang_labels = {"zh": "语言: 中文", "en": "Language: EN"}
+        draw.text((x_base, y), lang_labels[lang], fill=(200, 200, 200), font=self._font)
         y += 30
 
         # 分隔线

@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest pytest-cov
+          pip install numpy opencv-python pillow
+          # 注意：不安装 ultralytics/torch（太慢），detection 测试仅测逻辑
+
+      - name: Run tests with coverage
+        run: |
+          pytest tests/ -v --tb=short --cov=src --cov-report=term-missing --cov-report=xml
+
+      - name: Upload coverage to Codecov (optional)
+        if: false  # 需要配置 CODECOV_TOKEN secret
+        uses: codecov/codecov-action@v4
+        with:
+          file: ./coverage.xml
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install numpy opencv-python pillow
+
+      - name: Check Python syntax
+        run: |
+          python -m compileall src/ scripts/ tests/ -q
+
+      - name: Check import consistency
+        run: |
+          python -c "
+          import sys, os
+          sys.path.insert(0, '.')
+          # 验证核心配置模块可导入
+          from src.config import YOLO_CONFIG, TTS_PRIORITY_EMERGENCY, YOLO_ENGINE_PATH
+          from src.prompts import MODE_NAME_LIST, PROMPT_LIB, TIP_VOICE
+          from src.platform import IS_JETSON, IS_WINDOWS, get_platform_name
+          print('Core imports OK')
+          "

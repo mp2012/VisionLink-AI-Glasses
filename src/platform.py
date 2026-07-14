@@ -19,8 +19,15 @@ def _check_jetson() -> bool:
                     return True
         except Exception:
             pass
-    # 保底策略：aarch64 架构
-    return platform.machine() == "aarch64"
+    # 保底策略：aarch64 架构（可能误判树莓派 5 等非 Jetson ARM64 设备）
+    if platform.machine() == "aarch64":
+        import logging
+        logging.getLogger(__name__).warning(
+            "无法读取设备型号，通过 aarch64 架构推测为 Jetson 平台。"
+            "若实际为非 Jetson ARM64 设备，请设置 VISIONLINK_PLATFORM=linux 环境变量。"
+        )
+        return True
+    return False
 
 
 IS_JETSON = _check_jetson()

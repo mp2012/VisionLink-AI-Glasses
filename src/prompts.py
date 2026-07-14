@@ -51,7 +51,10 @@ TIP_VOICE = {
         "no_change": "画面无变化，减少提醒",
         "cmd_ok": "收到指令，开始执行",
         "mic_fail": "无法识别语音，请重试",
-        "exit": "程序即将退出"
+        "mode_switch": "已切换至{mode}",
+        "exit": "程序即将退出",
+        "yolo_not_enabled": "YOLO 避障未启用，请使用 dual yolo 参数启动",
+        "infer_timeout": "画面识别超时，请重试",
     },
     "en": {
         "start": "System started",
@@ -64,7 +67,10 @@ TIP_VOICE = {
         "no_change": "Same scene, less reminder",
         "cmd_ok": "Command received, executing",
         "mic_fail": "Failed to recognize voice, please try again",
-        "exit": "Program exiting"
+        "mode_switch": "Switched to {mode}",
+        "exit": "Program exiting",
+        "yolo_not_enabled": "YOLO obstacle avoidance not enabled, use --dual --yolo to start",
+        "infer_timeout": "Recognition timeout, please try again",
     }
 }
 
@@ -74,15 +80,15 @@ PROMPT_LIB = {
         "你是智能辅助眼镜的障碍物提醒助手，用简短一句话中文提醒道路风险。",
         "直接列出图中的文字，不解释不思考。无文字则回复'没有'。",
         "检测画面中的人脸并给出简短提示。",
-        "用简短中文介绍眼前风景场景。",
-        "结合图片回答问题，支持中英互译，回答简洁。"
+        "用简短中文介绍眼前风景场景。不要使用Markdown格式，输出纯文本。",
+        "结合图片回答问题，支持中英互译，回答简洁。不要使用Markdown格式，输出纯文本。"
     ],
     "en": [
         "You are an obstacle reminder for smart glasses, warn road hazards briefly in English.",
         "List all text in the image directly, no explanation. Say 'none' if no text.",
         "Detect faces and give a short prompt in English.",
-        "Briefly introduce the scene in English.",
-        "Answer questions with image, support translation, keep answer short in English."
+        "Briefly introduce the scene in English. Do not use markdown format, output plain text only.",
+        "Answer questions with image, support translation, keep answer short in English. Do not use markdown format, output plain text only."
     ]
 }
 

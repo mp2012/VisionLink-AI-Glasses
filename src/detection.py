@@ -9,6 +9,7 @@ YOLO 实时障碍物检测模块
 - 播报冷却机制，避免重复提醒
 - 异常重连与日志记录
 """
+import os
 import time
 import logging
 import threading
@@ -57,12 +58,11 @@ COCO_CLASSES = {
     73: "书本", 77: "手机",
 }
 
-# 障碍物危险等级分类（描述不含"前方"，位置由 _describe_position 提供）
+# 障碍物危险等级分类（中文）
 OBSTACLE_LEVELS = {
     "danger": {0: "有人", 2: "有车", 3: "有摩托车", 5: "有公交车", 7: "有卡车"},
     "warning": {1: "有自行车", 13: "有长椅", 56: "有椅子"},
 }
-
 
 class YOLODetector:
     """
@@ -84,19 +84,21 @@ class YOLODetector:
         detector.stop()
     """
 
-    def __init__(self, camera_manager, depth_camera=None, on_detect=None, config: dict = None):
+    def __init__(self, camera_manager, depth_camera=None, on_detect=None, config: dict = None, pause_event=None):
         """
         Args:
             camera_manager: FOV 摄像头管理器实例
             depth_camera: OrbbecDepthCamera 实例（可选，启用真实深度测量）
             on_detect: 检测回调函数 callback(DetectionResult)
             config: 检测配置字典，默认使用 YOLO_CONFIG
+            pause_event: threading.Event 用于 GPU 独占控制（默认使用模块级 YOLO_PAUSE_EVENT）
         """
         self.camera = camera_manager
         self.depth_camera = depth_camera
         self.on_detect = on_detect
         self.config = {**YOLO_CONFIG, **(config or {})}
         self._depth_config = DEPTH_CONFIG
+        self._pause_event = pause_event if pause_event is not None else YOLO_PAUSE_EVENT
 
         self._model = None
         self._running = False
@@ -115,17 +117,58 @@ class YOLODetector:
         return self.depth_camera is not None and self.depth_camera.is_running()
 
     def _load_model(self) -> bool:
-        """加载 YOLO 模型"""
+        """
+        加载 YOLO 模型，优先使用 TensorRT 引擎（Jetson 平台）
+
+        加载策略:
+        1. Jetson + .engine 文件存在 → 使用 TensorRT FP16 引擎（~5-15ms）
+        2. Jetson + .engine 加载失败 → 自动回退 PyTorch .pt（~50-80ms）
+        3. 非 Jetson 或 .engine 不存在 → 使用 PyTorch .pt
+        """
+        use_engine = False
+        engine_path = self.config.get("engine_path", "")
+        pt_path = self.config["model_path"]
+
         try:
             from ultralytics import YOLO
-            model_path = self.config["model_path"]
+
+            # 决定使用哪个模型文件
+            model_path = pt_path  # 默认使用 PyTorch
+
+            if IS_JETSON and engine_path and os.path.exists(engine_path):
+                use_engine = True
+                model_path = engine_path
+                logger.info(f"检测到 TensorRT 引擎，尝试加载: {model_path}")
+
             self._model = YOLO(model_path)
-            logger.info(f"YOLO 模型已加载: {model_path}")
+
+            if use_engine:
+                logger.info(f"YOLO 模型已加载 [TensorRT FP16]: {model_path}")
+            else:
+                if IS_JETSON and engine_path and not os.path.exists(engine_path):
+                    logger.info(
+                        f"YOLO 模型已加载 [PyTorch]: {model_path}"
+                        f"（TensorRT 引擎不存在，运行 scripts/export_yolo_trt.py 导出以获得加速）"
+                    )
+                else:
+                    logger.info(f"YOLO 模型已加载 [PyTorch]: {model_path}")
             return True
+
         except ImportError:
             logger.error("ultralytics 未安装，请执行: pip install ultralytics")
             return False
         except Exception as e:
+            if use_engine:
+                logger.warning(f"TensorRT 引擎加载失败: {e}")
+                logger.info("回退到 PyTorch 模型...")
+                try:
+                    from ultralytics import YOLO
+                    self._model = YOLO(pt_path)
+                    logger.info(f"YOLO 模型已加载 [PyTorch 回退]: {pt_path}")
+                    return True
+                except Exception as e2:
+                    logger.error(f"PyTorch 回退也失败: {e2}")
+                    return False
             logger.error(f"YOLO 模型加载失败: {e}")
             return False
 
@@ -174,8 +217,8 @@ class YOLODetector:
 
         while self._running:
             # 独占模式：VLM 推理进行时暂停 YOLO，释放 GPU 显存
-            if not YOLO_PAUSE_EVENT.is_set():
-                YOLO_PAUSE_EVENT.wait(timeout=0.5)
+            if not self._pause_event.is_set():
+                self._pause_event.wait(timeout=0.5)
                 continue
 
             try:
@@ -238,8 +281,13 @@ class YOLODetector:
 
             boxes = det.boxes
             for i in range(len(boxes)):
-                cls_id = int(boxes.cls[i].item())
+                cls_val = boxes.cls[i].item()
+                if np.isnan(cls_val):
+                    continue
+                cls_id = int(cls_val)
                 conf = boxes.conf[i].item()
+                if np.isnan(conf):
+                    continue
 
                 if conf < conf_threshold:
                     continue

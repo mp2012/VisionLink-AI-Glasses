@@ -8,6 +8,7 @@
 - YOLO 回调：接收避障检测结果 → 分级播报
 """
 import os
+import re
 import time
 import logging
 import threading
@@ -17,11 +18,13 @@ import cv2
 
 from .config import (
     AGENT_SCAN_INTERVAL, BROADCAST_COOLDOWN, LONG_TIME_LIMIT,
-    MAX_CONTEXT_ROUND, STATE_IDLE, STATE_LISTEN, STATE_INFER, STATE_TTS,
+    MAX_CONTEXT_ROUND, STATE_IDLE, STATE_INFER, STATE_TTS,
     MODE_NAMES, SNAPSHOT_DIR, INFER_LOG_DIR, SPACE_DEBOUNCE,
     YOLO_PAUSE_EVENT,
+    TTS_PRIORITY_EMERGENCY, TTS_PRIORITY_WARNING,
+    TTS_PRIORITY_SYSTEM, TTS_PRIORITY_NORMAL,
 )
-from .prompts import AGENT_PROMPT, TASK_PLAN_PROMPT, TIP_VOICE, PROMPT_LIB
+from .prompts import AGENT_PROMPT, TASK_PLAN_PROMPT, TIP_VOICE, PROMPT_LIB, MODE_NAME_LIST
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +70,12 @@ class Agent:
         # YOLO 避障
         self._yolo_enabled = False
         self._yolo_last_announce = 0.0
+        self._last_detection_text = ""   # 供 Web 仪表板读取
+        self._last_detection_time = 0.0
+
+        # VLM 推理
+        self._last_inference_text = ""   # 供 Web 仪表板读取
+        self._last_inference_time = 0.0
 
         # 回调注册
         self._callbacks: Dict[str, Callable] = {}
@@ -83,7 +92,8 @@ class Agent:
 
     @property
     def mode_name(self) -> str:
-        return MODE_NAMES[self._current_mode - 1] if 1 <= self._current_mode <= 5 else "未知"
+        fallback = "未知" if self._voice_lang == "zh" else "Unknown"
+        return MODE_NAME_LIST[self._voice_lang][self._current_mode - 1] if 1 <= self._current_mode <= 5 else fallback
 
     @property
     def auto_enabled(self) -> bool:
@@ -92,6 +102,26 @@ class Agent:
     @property
     def yolo_enabled(self) -> bool:
         return self._yolo_enabled
+
+    @yolo_enabled.setter
+    def yolo_enabled(self, value: bool):
+        self._yolo_enabled = value
+
+    @property
+    def last_detection_text(self) -> str:
+        return self._last_detection_text
+
+    @property
+    def last_detection_time(self) -> float:
+        return self._last_detection_time
+
+    @property
+    def last_inference_text(self) -> str:
+        return self._last_inference_text
+
+    @property
+    def last_inference_time(self) -> float:
+        return self._last_inference_time
 
     @property
     def is_busy(self) -> bool:
@@ -112,6 +142,14 @@ class Agent:
             self._current_mode = mode_idx
             logger.info(f"切换模式: {mode_idx} - {self.mode_name}")
 
+            # 仪表板打点
+            try:
+                from src.dashboard_status import system_status
+                system_status.set_mode(mode_idx, self.mode_name)
+                system_status.set_yolo_running(mode_idx == 1)
+            except ImportError:
+                pass
+
             # 离开模式 1 时暂停 YOLO，进入模式 1 时恢复 YOLO
             if prev_mode == 1 and mode_idx != 1:
                 YOLO_PAUSE_EVENT.clear()
@@ -120,13 +158,16 @@ class Agent:
                 YOLO_PAUSE_EVENT.set()
                 logger.info("YOLO 避障已恢复（进入障碍检测模式）")
 
-            self.tts.speak(f"已切换至{self.mode_name}")
+            self.tts.speak(
+                TIP_VOICE[self._voice_lang].get("mode_switch", "已切换至{mode}").format(mode=self.mode_name),
+                priority=TTS_PRIORITY_SYSTEM
+            )
 
     def toggle_auto(self) -> bool:
         """开关自动模式"""
         self._auto_enabled = not self._auto_enabled
         tip_key = "auto_on" if self._auto_enabled else "auto_off"
-        self.tts.speak(TIP_VOICE[self._voice_lang].get(tip_key, ""))
+        self.tts.speak(TIP_VOICE[self._voice_lang].get(tip_key, ""), priority=TTS_PRIORITY_SYSTEM)
         logger.info(f"自动模式: {'开启' if self._auto_enabled else '关闭'}")
         return self._auto_enabled
 
@@ -134,7 +175,7 @@ class Agent:
         """切换语种 (zh/en)"""
         self._voice_lang = lang
         tip_key = f"lang_switch_{lang}"
-        self.tts.speak(TIP_VOICE[self._voice_lang].get(tip_key, ""))
+        self.tts.speak(TIP_VOICE[self._voice_lang].get(tip_key, ""), priority=TTS_PRIORITY_SYSTEM)
 
     # ==================== 事件回调注册 ====================
 
@@ -196,6 +237,8 @@ class Agent:
         """
         自动模式场景扫描 + 任务执行
 
+        注意：自动模式下也会调用 VLM 推理，需要暂停 YOLO 防止 GPU 竞争
+
         Args:
             frame: 当前 POV 摄像头帧
         """
@@ -205,7 +248,19 @@ class Agent:
         if not img_b64:
             return
 
-        res = self.infer.infer(AGENT_PROMPT, img_b64)
+        # ★ 暂停 YOLO 防止 GPU 竞争，推理完成后恢复
+        yolo_was_running = YOLO_PAUSE_EVENT.is_set()
+        if yolo_was_running:
+            YOLO_PAUSE_EVENT.clear()
+            logger.info("YOLO 避障已暂停（自动模式 VLM 推理）")
+
+        try:
+            res = self.infer.infer(AGENT_PROMPT, img_b64)
+        finally:
+            if yolo_was_running and self._current_mode == 1:
+                YOLO_PAUSE_EVENT.set()
+                logger.info("YOLO 避障已恢复（自动模式推理完成）")
+
         tasks = self._parse_task_numbers(res)
         logger.info(f"自动分配任务: {tasks}")
 
@@ -224,7 +279,7 @@ class Agent:
             if self._same_count >= 3:
                 for num in tasks:
                     self._last_broadcast[num] = now + LONG_TIME_LIMIT
-                self.tts.speak(TIP_VOICE[self._voice_lang].get("no_change", "画面无变化"))
+                self.tts.speak(TIP_VOICE[self._voice_lang].get("no_change", "画面无变化"), priority=TTS_PRIORITY_SYSTEM)
                 return
         else:
             self._same_count = 0
@@ -251,66 +306,115 @@ class Agent:
         """
         YOLO 检测结果回调（来自 detection.py）
 
+        优先级仲裁 + 去重策略（P0 实时性优先）：
+        - danger（紧急避障）：优先级 0，可打断所有低优先级播报 + 旧 P0
+        - warning（普通预警）：优先级 1，可打断 VLM 播报但不打断 danger
+        - P0 警报附带生成时间戳，TTS 层会丢弃过时 (>2.5s) 的警告
+        - P0 去重按「方向 + 粗距离带」判定，同方向但距离显著变化会重新播报
+
         Args:
             detection_result: DetectionResult 实例
         """
         if not self._yolo_enabled:
             return
 
-        now = time.time()
-
-        # 冷却：piper 播报约需 3-4 秒，8 秒保证不重叠
-        if now - self._yolo_last_announce < 8.0:
-            return
-
-        # 如果 TTS 还在播放，等待播完再发新的
-        if self.tts.is_speaking():
-            return
-
         msg = detection_result.alert_message
-        if msg:
-            # 粗粒度去重：提取"方向+距离等级"作为 key，避免"右侧800mm"→"右侧700mm"重复播报
-            # 例如 "右侧近处约800毫米有人" → key="右侧近处"
-            dedup_key = self._extract_obstacle_key(msg)
-            last_key = getattr(self, '_yolo_last_key', '')
-            if dedup_key == last_key:
-                return
-            self._yolo_last_key = dedup_key
+        if not msg:
+            return
 
-            self._yolo_last_announce = now
-            logger.info(f"YOLO 避障播报: {msg}")
-            self.tts.speak(msg)
+        now = time.time()
+        has_danger = len(detection_result.dangers) > 0
+
+        # 冷却控制：危险场景 3 秒，预警场景 8 秒
+        cooldown = 3.0 if has_danger else 8.0
+        if now - self._yolo_last_announce < cooldown:
+            return
+
+        # ★ P0 去重增强：方向 + 粗距离带（0.5m 粒度）
+        # 同方向但距离发生显著变化（如 1.2m→0.3m）视为新危险，必须重新播报
+        dedup_key = self._extract_obstacle_key(msg, has_danger, detection_result)
+        last_key = getattr(self, '_yolo_last_key', '')
+        if dedup_key == last_key:
+            return
+        self._yolo_last_key = dedup_key
+        self._yolo_last_announce = now
+
+        # 存储供 Web 仪表板读取
+        self._last_detection_text = msg
+        self._last_detection_time = now
+
+        # 选择优先级：危险立即打断一切（含旧的 P0），预警只打断 VLM
+        priority = TTS_PRIORITY_EMERGENCY if has_danger else TTS_PRIORITY_WARNING
+
+        # ★ 传递检测时间戳，TTS 层据此判断过时丢弃
+        detect_time = detection_result.timestamp or now
+        logger.info(f"YOLO 避障播报 [P{priority}]: {msg}")
+        self.tts.speak(msg, priority=priority, generated_at=detect_time)
+
+        # 仪表板打点
+        try:
+            from src.dashboard_status import system_status
+            system_status.log_detection(msg, priority)
+        except ImportError:
+            pass
 
     @staticmethod
-    def _extract_obstacle_key(msg: str) -> str:
+    def _extract_obstacle_key(msg: str, has_danger: bool = False,
+                              result=None) -> str:
         """
-        从播报消息中提取去重 key（仅按方向去重）
+        从播报消息中提取去重 key
+
+        P0（危险）：方向 + 粗距离带（0.5m 粒度），同方向但距离显著变化要重新播报
+        P1（预警）：仅按方向去重，避免刷屏
+
         例如：
-          "危险！右侧近处约800毫米有人" → "右侧"
-          "危险！右侧前方约900毫米有人" → "右侧"（同上，跳过）
-          "危险！正前方近处约600毫米有人" → "正前方"
+          P0 "危险！右侧近处约800毫米有人" → "右侧:800-1000"
+          P0 "危险！右侧近处约300毫米有人" → "右侧:0-500"  ← 新 key，会播报
+          P1 "注意，右侧有自行车" → "右侧"
         """
-        import re
+        # 提取方向
         m = re.search(r'(正前方|左侧|右侧|左前方|右前方)', msg)
-        if m:
-            return m.group(0)
-        return msg[:6]
+        direction = m.group(0) if m else msg[:6]
+
+        if not has_danger:
+            return direction
+
+        # P0：附加粗距离带以区分靠近过程
+        distance_band = ""
+        if result and result.dangers:
+            for danger_text in result.dangers:
+                dist_m = re.search(r'约(\d+)毫米', danger_text)
+                if dist_m:
+                    mm = int(dist_m.group(1))
+                    # 粗粒度分带：0-500, 500-1000, 1000-1500
+                    band = (mm // 500) * 500
+                    distance_band = f":{band}-{band + 500}"
+                    break
+
+        return f"{direction}{distance_band}"
 
     def toggle_yolo(self) -> bool:
         """开关 YOLO 避障播报"""
-        self._yolo_enabled = not self._yolo_enabled
+        self.yolo_enabled = not self._yolo_enabled
         logger.info(f"YOLO 避障播报: {'开启' if self._yolo_enabled else '关闭'}")
         return self._yolo_enabled
 
     # ==================== 语音交互 ====================
 
     def handle_voice_chat(self, frame):
-        """语音交互模式（带麦克风互斥锁）"""
+        """语音交互模式（带麦克风互斥锁 + GPU 资源保护）"""
         if self._mic_listening:
             logger.warning("麦克风正忙")
             return
 
         self._mic_listening = True
+
+        # ★ 暂停 YOLO 防止 VLM 推理期间 GPU 竞争
+        yolo_was_running = YOLO_PAUSE_EVENT.is_set()
+        if yolo_was_running:
+            YOLO_PAUSE_EVENT.clear()
+            logger.info("YOLO 避障已暂停（语音交互模式）")
+
         try:
             import speech_recognition as sr
             r = sr.Recognizer()
@@ -321,17 +425,17 @@ class Agent:
             user_text = r.recognize_google(audio, language="zh-CN")
             logger.info(f"语音识别: {user_text}")
 
-            # 尝试解析为任务
+            # 尝试解析为任务（text-only 推理，轻量）
             task_raw = self.infer.infer(
                 TASK_PLAN_PROMPT.format(user_cmd=user_text)
             )
             tasks = self._parse_task_numbers(task_raw)
             if tasks:
-                self.tts.speak(TIP_VOICE[self._voice_lang].get("cmd_ok", "收到指令"))
+                self.tts.speak(TIP_VOICE[self._voice_lang].get("cmd_ok", "收到指令"), priority=TTS_PRIORITY_SYSTEM)
                 self._execute_auto_tasks(tasks, frame)
                 return
 
-            # 否则作为对话
+            # 否则作为对话（含图片的多模态推理）
             img_b64 = self.infer.image_to_base64(frame)
             history_str = ""
             for item in self._context_history:
@@ -342,7 +446,7 @@ class Agent:
             ans = self.infer.infer(full_prompt, img_b64)
 
             if ans:
-                self.tts.speak(ans)
+                self.tts.speak(ans, priority=TTS_PRIORITY_NORMAL)
                 self._context_history.append({"q": user_text, "a": ans})
                 if len(self._context_history) > MAX_CONTEXT_ROUND:
                     self._context_history.pop(0)
@@ -351,8 +455,11 @@ class Agent:
             logger.warning("speech_recognition 未安装")
         except Exception as e:
             logger.warning(f"语音识别异常: {e}")
-            self.tts.speak(TIP_VOICE[self._voice_lang].get("mic_fail", "语音识别失败"))
+            self.tts.speak(TIP_VOICE[self._voice_lang].get("mic_fail", "语音识别失败"), priority=TTS_PRIORITY_SYSTEM)
         finally:
+            if yolo_was_running and self._current_mode == 1:
+                YOLO_PAUSE_EVENT.set()
+                logger.info("YOLO 避障已恢复（语音交互完成）")
             self._mic_listening = False
 
     # ==================== 内部方法 ====================
@@ -361,45 +468,86 @@ class Agent:
         """
         执行单次推理任务
 
+        GPU 资源保护：触发推理时立即暂停 YOLO，不等到 set_mode 切换
+        防止 YOLO 和 VLM 同时占用 GPU 导致推理耗时从 ~15s 暴涨到 120s+
+        推理结束后，仅在仍处于障碍检测模式时恢复 YOLO
+
         Args:
             frame: 图像帧
             mode_idx: 模式编号 (1-5)
         """
-        # 保存快照
-        snapshot_path = self._save_snapshot(frame)
-
-        # 图像编码
-        img_b64 = self.infer.image_to_base64(frame)
-        if not img_b64:
-            logger.error("图像编码失败，推理中止")
-            return
-
-        # 独占模式：确保推理期间 YOLO 避障线程暂停，释放 GPU 显存给 VLM
-        # 注意：set_mode 切换时已经处理了 YOLO 暂停/恢复，此处为双重保险
+        # ★ 立即暂停 YOLO：必须在任何 I/O 操作之前执行，
+        # 确保 YOLO 检测线程尽快释放 GPU 显存和 CUDA 核心
         yolo_was_running = YOLO_PAUSE_EVENT.is_set()
         if yolo_was_running:
             YOLO_PAUSE_EVENT.clear()
-            logger.debug("YOLO 避障已暂停（VLM 推理独占 GPU）")
+            logger.info("YOLO 避障已暂停（VLM 推理独占 GPU）")
+
+        # ★ 仪表板：标记识别中状态
+        try:
+            from src.dashboard_status import system_status
+            system_status.set_app_state("inferring")
+        except ImportError:
+            pass
 
         try:
-            # 推理
-            logger.info(f"推理模式 {mode_idx} ({MODE_NAMES[mode_idx - 1]})，快照: {snapshot_path}")
-            prompt = PROMPT_LIB["zh"][mode_idx - 1]
-            result = self.infer.infer(prompt, img_b64)
+            # 保存快照
+            snapshot_path = self._save_snapshot(frame)
+
+            # 仪表板打点：记录最近快照
+            try:
+                from src.dashboard_status import system_status
+                system_status.set_last_snapshot(snapshot_path, mode_idx)
+            except ImportError:
+                pass
+
+            # 图像编码
+            img_b64 = self.infer.image_to_base64(frame)
+            if not img_b64:
+                logger.error("图像编码失败，推理中止")
+                # 编码失败也需恢复 YOLO
+                if yolo_was_running and self._current_mode == 1:
+                    YOLO_PAUSE_EVENT.set()
+                    logger.info("YOLO 避障已恢复（编码失败）")
+                return
+
+            try:
+                # 推理
+                logger.info(f"推理模式 {mode_idx} ({MODE_NAMES[mode_idx - 1]})，快照: {snapshot_path}")
+                prompt = PROMPT_LIB[self._voice_lang][mode_idx - 1]
+                result = self.infer.infer(prompt, img_b64)
+            finally:
+                # 推理完成后，仅在障碍检测模式下恢复 YOLO
+                if yolo_was_running and self._current_mode == 1:
+                    YOLO_PAUSE_EVENT.set()
+                    logger.info("YOLO 避障已恢复")
         finally:
-            # 推理完成后，仅在障碍检测模式下恢复 YOLO
-            if yolo_was_running and self._current_mode == 1:
-                YOLO_PAUSE_EVENT.set()
-                logger.debug("YOLO 避障已恢复")
+            # ★ 仪表板：恢复空闲状态（无论推理成功/失败/异常都执行）
+            try:
+                from src.dashboard_status import system_status
+                system_status.set_app_state("idle")
+            except ImportError:
+                pass
 
         if result:
+            # 存储供 Web 仪表板读取
+            self._last_inference_text = result
+            self._last_inference_time = time.time()
+
             # 保存推理日志
             log_path = self._save_infer_log(snapshot_path, mode_idx, result)
             logger.info(f"结果: {result[:80]}...")
             logger.info(f"日志: {log_path}")
 
-            # TTS 播报
-            self.tts.speak(result)
+            # TTS 播报（常规优先级，可被避障打断）
+            self.tts.speak(result, priority=TTS_PRIORITY_NORMAL)
+        else:
+            # 推理返回空（超时 / thinking 截断 / 模型异常）
+            logger.warning(f"推理返回空结果 (模式{mode_idx})")
+            self.tts.speak(
+                TIP_VOICE[self._voice_lang].get("infer_timeout", "画面识别超时，请重试"),
+                priority=TTS_PRIORITY_SYSTEM,
+            )
 
     def _save_snapshot(self, frame) -> str:
         """保存快照图片"""

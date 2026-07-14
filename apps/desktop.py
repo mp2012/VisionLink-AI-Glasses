@@ -21,6 +21,7 @@ from src.camera import CameraManager
 from src.inference import InferenceEngine
 from src.tts import TTSEngine
 from src.agent import Agent
+from src.prompts import TIP_VOICE
 from src.ui import UIManager
 
 # ==================== 日志配置 ====================
@@ -45,12 +46,11 @@ tts = TTSEngine()
 ui = UIManager(enable_gui=True)
 agent = Agent(infer, tts, camera)
 
-current_mode = 1
 voice_lang = "zh"
 
 
 def main():
-    global current_mode, voice_lang
+    global voice_lang
 
     logger.info("=" * 55)
     logger.info("VisionLink Desktop 启动")
@@ -63,7 +63,7 @@ def main():
         logger.error("摄像头初始化失败")
         return
 
-    tts.speak("项目启动")
+    tts.speak(TIP_VOICE["zh"]["start"])
 
     # GUI 窗口
     cv2.namedWindow("VisionLink Desktop", cv2.WINDOW_NORMAL)
