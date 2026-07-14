@@ -128,7 +128,7 @@ An offline multimodal generative AI assistive system based on Gemma 4 for visual
 
 ```
 VisionLink/
-├── src/                    # 核心源码（跨平台，10 个模块）
+├── src/                    # 核心源码（跨平台，15 个模块）
 │   ├── platform.py         # 平台检测与环境适配
 │   ├── config.py           # 统一配置中心
 │   ├── camera.py           # 双摄像头管理（POV 镜腿 + FOV 胸前）
@@ -138,20 +138,36 @@ VisionLink/
 │   ├── ui.py               # UI 绘制（YOLO 检测框叠加，自动适配无头模式）
 │   ├── agent.py            # 核心控制中枢（状态机 / 自动模式 / YOLO 回调）
 │   ├── prompts.py          # Prompt 模板库（中英双语）
-│   └── orbbec_depth.py     # Orbbec Astra Plus 深度相机 ctypes 封装
-├── apps/                   # 应用入口（3 个）
+│   ├── orbbec_depth.py     # Orbbec Astra Plus 深度相机 ctypes 封装
+│   ├── volume_control.py   # USB 耳麦物理音量按钮监听（evdev + amixer）
+│   ├── web_dashboard.py    # Web 控制面板（实时状态/日志/控制）
+│   ├── web_preview.py      # Web 实时画面预览
+│   └── dashboard_status.py # 系统状态数据采集
+├── apps/                   # 应用入口（4 个）
 │   ├── desktop.py          # Windows/Linux 桌面 GUI 全功能版
 │   ├── headless.py         # Jetson 无头模式主入口（evdev 全局键盘监听）
-│   └── jetson.py           # Jetson 终端键盘兼容版（向后兼容）
-├── scripts/                # 测试与诊断脚本（5 个）
+│   ├── jetson.py           # Jetson 终端键盘兼容版（向后兼容）
+│   └── web_app.py          # Web 控制面板独立入口
+├── scripts/                # 测试与诊断脚本（4 个）
 │   ├── check_system.py     # 一键系统综合诊断（8 大类检查）
 │   ├── check_camera.py     # 摄像头扫描与诊断
-│   └── check_audio.py      # 音频设备检测与 TTS 测试
-├── start.sh                # 一键启动脚本（5 种模式）
-├── archive/                # 历史迭代版本（11 个文件）
+│   ├── check_audio.py      # 音频设备检测与 TTS 测试
+│   └── export_yolo_trt.py  # YOLOv8 TensorRT 模型导出工具
+├── tests/                  # 单元测试（pytest）
+│   ├── conftest.py         # 测试夹具与 mock
+│   ├── test_agent.py       # Agent 核心逻辑测试
+│   ├── test_config.py      # 配置模块测试
+│   ├── test_detection.py   # YOLO 检测模块测试
+│   ├── test_platform.py    # 平台检测模块测试
+│   ├── test_prompts.py     # Prompt 模板测试
+│   └── test_tts.py         # TTS 模块测试
+├── .github/workflows/      # CI/CD 自动测试流程
+├── start.sh                # 一键启动脚本（6 种模式）
+├── archive/                # 历史迭代版本
 ├── assets/                 # 静态资源（字体/音频）
 ├── docs/                   # 技术文档
 ├── Log/                    # 运行日志
+├── pytest.ini              # pytest 配置
 ├── requirements.txt        # 通用依赖
 └── requirements-jetson.txt # Jetson 专用依赖
 ```
@@ -189,6 +205,7 @@ ollama pull gemma4:e2b-it-qat
 ./start.sh              # 默认：单摄 POV 模式
 ./start.sh dual         # 双摄模式（POV + FOV）
 ./start.sh full         # 全功能模式（双摄 + YOLO 避障）
+./start.sh depth        # 深度避障模式（双摄 + YOLO + Orbbec 真实深度）
 ./start.sh gui          # 无头模式 + GUI 调试窗口
 ./start.sh desktop      # 桌面 GUI 模式
 ```
@@ -215,6 +232,65 @@ ollama pull gemma4:e2b-it-qat
 
 ---
 
+## 新增功能
+
+### USB 耳麦物理音量按钮
+
+在无头模式下，USB 耳麦上的物理音量 +/- 按钮默认不生效（ALSA 直连无 HID 事件处理）。现在 `src/volume_control.py` 通过 evdev 监听 HID 音量键事件，自动调用 amixer 调节声卡音量。
+
+- 自动发现耳麦对应的 `/dev/input/event*` 设备
+- 支持热插拔，设备断连后自动重连
+- 静默降级：设备未识别时不影响主功能
+- 启动时自动运行，无需额外配置
+
+### Web 遥测仪表板
+
+VisionLink 内置 Web 遥测仪表板，在同一局域网的手机/电脑浏览器打开即可实时监控系统运行状态：
+
+![遥测仪表板](images/telemetry_ui.png)
+
+**访问方式**：启动程序后，浏览器打开 `http://<Jetson_IP>:5000`
+
+**功能特性**：
+
+| 模块 | 文件 | 功能 |
+| :--- | :--- | :--- |
+| 数据采集 | `src/dashboard_status.py` | 线程安全单例，追踪模式/YOLO/深度相机/Ollama 连接状态、推理/检测/TTS 事件日志（环形缓冲区，每种最多 50 条） |
+| 硬件遥测 | `src/dashboard_status.py` | Jetson 平台 jtop（GPU/CPU/内存/温度），非 Jetson 平台 psutil 降级兜底 |
+| Web 仪表板 | `src/web_dashboard.py` | Flask 路由 + HTML 页面，暗色终端风格 UI，实时刷新 GPU/CPU/MEM/TEMP 仪表盘、模式状态、事件日志流 |
+| 视频推流 | `src/web_preview.py` | MJPEG 实时画面推流（`/video_feed`），后台 daemon 线程，非阻塞运行 |
+
+**仪表板页面包含**：
+- **硬件状态**：GPU 使用率、CPU 使用率、内存占用、芯片温度，2 秒刷新
+- **应用状态**：当前模式、YOLO 开关、深度相机连接、Ollama 连接、自动模式状态
+- **实时日志**：推理结果（含耗时）、障碍物检测（含危险/预警分级）、TTS 播报记录
+- **最新快照**：最近一次触发的识别结果与对应画面
+
+### 单元测试与 CI
+
+项目现已接入 pytest 测试框架，覆盖核心模块：
+
+| 测试文件 | 覆盖模块 |
+| :--- | :--- |
+| `tests/test_agent.py` | Agent 状态机与核心逻辑 |
+| `tests/test_config.py` | 配置加载与校验 |
+| `tests/test_detection.py` | YOLO 检测流程 |
+| `tests/test_platform.py` | 平台检测适配 |
+| `tests/test_prompts.py` | Prompt 模板渲染 |
+| `tests/test_tts.py` | TTS 多级回退逻辑 |
+
+```bash
+# 运行全部测试
+pytest tests/ -v
+
+# 运行单个模块测试
+pytest tests/test_agent.py -v
+```
+
+CI 通过 `.github/workflows/ci.yml` 在每次 push 时自动运行测试。
+
+---
+
 ## 产品 Roadmap（迭代规划）
 
 * [x] **Phase 1 (PC Demo)**：PC端基本流水线跑通，完成三大核心多模态功能调试。
@@ -222,11 +298,13 @@ ollama pull gemma4:e2b-it-qat
 * [x] **Phase 3 (工程化重构)**：模块化代码架构，双平台统一接口，无头模式支持。
 * [x] **Phase 4 (硬件联调)**：完成镜腿微型 Type-C 摄像头原型制作，初步验证 POV 图像采集稳定性。
 * [x] **Phase 5 (工程封装)**：完成 YOLOv8 实时避障 + 深度距离估计 + 双视角融合，无头模式全局键盘交互。
+* [x] **Phase 5.5 (体验打磨)**：USB 耳麦物理音量按钮支持、Web 控制面板与实时画面预览、pytest 单元测试体系与 CI/CD 自动流程、Orbbec 深度避障模式。
 * [ ] **Phase 6 (工业设计)**：完成 3D 打印尼龙人体工学挂脖/背包打样，推出商业级 MVP 样机。
 
   **未来概念设计**：
 
-  ![未来概念图](images/concept/future_concept.png)
+  ![未来概念图1](images/concept/future_concept.png)
+  ![未来概念图2](images/concept/future_concept2.png)
 * [ ] **Phase 7 (场景外溢)**：横向跨界，平移至无网工业巡检机器人、失智老人健康看护等垂直市场。
 
 ---

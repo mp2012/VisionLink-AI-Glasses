@@ -106,7 +106,7 @@ The project spans a complete full-stack development path, ranging from **PC prot
 
 ```text
 VisionLink/
-├── src/                    # Core Source Code (Cross-platform, 10 modules)
+├── src/                    # Core Source Code (Cross-platform, 15 modules)
 │   ├── platform.py         # Platform detection & environment adaptation
 │   ├── config.py           # Unified configuration center
 │   ├── camera.py           # Dual camera management (POV glasses + FOV chest)
@@ -116,20 +116,36 @@ VisionLink/
 │   ├── ui.py               # UI rendering (YOLO overlay, auto-adapts to headless mode)
 │   ├── agent.py            # Core controller (state machine / auto mode / YOLO callback)
 │   ├── prompts.py          # Prompt template library (CN/EN bilingual)
-│   └── orbbec_depth.py     # Orbbec Astra Plus depth camera ctypes wrapper
-├── apps/                   # Application Entries (3)
+│   ├── orbbec_depth.py     # Orbbec Astra Plus depth camera ctypes wrapper
+│   ├── volume_control.py   # USB headset physical volume button listener (evdev + amixer)
+│   ├── web_dashboard.py    # Web control panel (real-time status / logs / control)
+│   ├── web_preview.py      # Web real-time camera preview
+│   └── dashboard_status.py # System status data collection
+├── apps/                   # Application Entries (4)
 │   ├── desktop.py          # Windows/Linux Desktop GUI full-featured edition
 │   ├── headless.py         # Jetson headless mode (evdev global keyboard listener)
-│   └── jetson.py           # Jetson terminal keyboard compatible (backward compat)
-├── scripts/                # Diagnostic & testing scripts (5)
+│   ├── jetson.py           # Jetson terminal keyboard compatible (backward compat)
+│   └── web_app.py          # Web control panel standalone entry
+├── scripts/                # Diagnostic & testing scripts (4)
 │   ├── check_system.py     # One-click system comprehensive diagnostic (8 categories)
 │   ├── check_camera.py     # Camera scanning & diagnostic
-│   └── check_audio.py      # Audio device detection & TTS test
-├── start.sh                # One-click launcher (5 modes)
-├── archive/                # Legacy iteration history (11 files)
+│   ├── check_audio.py      # Audio device detection & TTS test
+│   └── export_yolo_trt.py  # YOLOv8 TensorRT model export
+├── tests/                  # Unit tests (pytest)
+│   ├── conftest.py         # Test fixtures & mocks
+│   ├── test_agent.py       # Agent core logic tests
+│   ├── test_config.py      # Config module tests
+│   ├── test_detection.py   # YOLO detection module tests
+│   ├── test_platform.py    # Platform detection module tests
+│   ├── test_prompts.py     # Prompt template tests
+│   └── test_tts.py         # TTS module tests
+├── .github/workflows/      # CI/CD automated testing pipeline
+├── start.sh                # One-click launcher (6 modes)
+├── archive/                # Legacy iteration history
 ├── assets/                 # Static resources (Fonts, Audio)
 ├── docs/                   # Technical documentation
 ├── Log/                    # Runtime logs
+├── pytest.ini              # pytest configuration
 ├── requirements.txt        # Universal dependencies
 └── requirements-jetson.txt # Jetson-specific dependencies
 ```
@@ -167,6 +183,7 @@ ollama pull gemma4:e2b-it-qat
 ./start.sh              # Default: single-cam POV mode
 ./start.sh dual         # Dual-cam mode (POV + FOV)
 ./start.sh full         # Full mode (dual-cam + YOLO avoidance)
+./start.sh depth        # Depth avoidance mode (dual-cam + YOLO + Orbbec real depth)
 ./start.sh gui          # Headless + GUI debug window
 ./start.sh desktop      # Desktop GUI mode
 ```
@@ -193,6 +210,65 @@ ollama pull gemma4:e2b-it-qat
 
 ---
 
+## New Features
+
+### USB Headset Physical Volume Buttons
+
+In headless mode, physical volume +/- buttons on USB headsets have no effect by default (ALSA direct connection lacks HID event handling). The `src/volume_control.py` module listens for HID volume key events via evdev and automatically adjusts the sound card volume through amixer.
+
+- Auto-discovers the headset's `/dev/input/event*` device
+- Supports hot-plug with automatic reconnect on device disconnect
+- Graceful degradation: silently falls back if no device is detected
+- Auto-starts with the application, no extra configuration needed
+
+### Web Telemetry Dashboard
+
+VisionLink includes a built-in web telemetry dashboard. Open it on any phone/computer browser on the same LAN to monitor system status in real time:
+
+![Telemetry Dashboard](images/telemetry_ui.png)
+
+**How to access**: After launching the program, open `http://<Jetson_IP>:5000` in a browser.
+
+**Modules**:
+
+| Module | File | Description |
+| :--- | :--- | :--- |
+| Data Collection | `src/dashboard_status.py` | Thread-safe singleton tracking mode/YOLO/depth camera/Ollama connection status; inference/detection/TTS event logs (ring buffer, max 50 per type) |
+| Hardware Telemetry | `src/dashboard_status.py` | Jetson platform via jtop (GPU/CPU/Memory/Temperature), non-Jetson via psutil fallback |
+| Web Dashboard | `src/web_dashboard.py` | Flask routes + HTML page, dark terminal-style UI, real-time GPU/CPU/MEM/TEMP gauges, mode status, event log streams |
+| Video Stream | `src/web_preview.py` | MJPEG real-time video stream (`/video_feed`), background daemon thread, non-blocking |
+
+**Dashboard page features**:
+- **Hardware Status**: GPU usage, CPU usage, memory, chip temperature, refreshed every 2s
+- **App Status**: Current mode, YOLO on/off, depth camera connection, Ollama connection, auto mode status
+- **Real-time Logs**: Inference results (with latency), obstacle detection (danger/warning tiers), TTS playback records
+- **Latest Snapshot**: Most recent recognition result and corresponding image
+
+### Unit Tests & CI
+
+The project now integrates pytest testing framework, covering core modules:
+
+| Test File | Module Covered |
+| :--- | :--- |
+| `tests/test_agent.py` | Agent state machine & core logic |
+| `tests/test_config.py` | Config loading & validation |
+| `tests/test_detection.py` | YOLO detection pipeline |
+| `tests/test_platform.py` | Platform detection & adaptation |
+| `tests/test_prompts.py` | Prompt template rendering |
+| `tests/test_tts.py` | TTS multi-level fallback logic |
+
+```bash
+# Run all tests
+pytest tests/ -v
+
+# Run single module tests
+pytest tests/test_agent.py -v
+```
+
+CI runs automatically on every push via `.github/workflows/ci.yml`.
+
+---
+
 ## Product Roadmap
 
 * [x] **Phase 1 (PC Demo)**: Completed core pipeline execution on PC; validated three core multimodal application modules.
@@ -200,8 +276,14 @@ ollama pull gemma4:e2b-it-qat
 * [x] **Phase 3 (Engineering Refactor)**: Modularized the code architecture; unified cross-platform interfaces and added headless mode support.
 * [x] **Phase 4 (Hardware Integration)**: Fabricated the prototype for the head-tracked micro Type-C glasses camera; initially verified POV image capture stability.
 * [x] **Phase 5 (YOLO + Dual-Cam Fusion)**: Completed YOLOv8 real-time obstacle avoidance + depth distance estimation + dual-perspective fusion; global keyboard interaction in headless mode.
+* [x] **Phase 5.5 (Polishing & Tooling)**: USB headset physical volume button support, web control panel & real-time preview, pytest unit test framework & CI/CD pipeline, Orbbec depth avoidance mode.
 * [ ] **Phase 6 (Product Enclosure)**: Complete 3D nylon printing for ergonomic wearable kits; seamlessly modify the tactical chest pack for motherboard concealment and passive cooling.
 * [ ] **Phase 7 (Vertical Expansion)**: Cross over to neighboring verticals, transferring technologies into network-isolated industrial inspection robotics and healthcare monitoring for elderlies with dementia.
+
+  **Future Concept Design**:
+
+  ![Future Concept 1](images/concept/future_concept.png)
+  ![Future Concept 2](images/concept/future_concept2.png)
 
 ---
 
