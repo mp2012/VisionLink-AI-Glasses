@@ -107,14 +107,17 @@ An offline multimodal generative AI assistive system based on Gemma 4 for visual
 
 ### 2. 硬件实物选型清单
 
-| 硬件模块 | 实物图参考 | 规格与作用说明 |
-| :--- | :---: | :--- |
-| **第一人称视角 (POV)**<br>镜腿微型单目摄像头 | <img src="images/hardware/1%20(2).jpg" width="180" alt="镜腿微型摄像头"/> | **微型 Type-C 摄像头模组**<br>• 超轻量设计，无缝夹持于普通眼镜镜腿，视角随头部自然转动。<br>• 负责灵活交互场景（文字 OCR、红绿灯识别、特定物体辨认、通用知识问答）。 |
-| **边缘计算大脑** | <img src="images/hardware/1%20(3).jpg" width="180" alt="Jetson Orin Nano"/> | **NVIDIA Jetson Orin Nano Dev Kit (8GB)**<br>• 系统便携核心，安全收纳于背包/胸包中。<br>• 提供高达 40 TOPS 的 AI 算力，完美运行量化后的端侧大模型。 |
-| **第三人称视角 (FOV)**<br>胸前深度摄像头 | <img src="images/hardware/1%20(7).jpg" width="180" alt="深度摄像头"/> | **Orbbec Astra Plus / 微型 HD 摄像头组件**<br>• 嵌入固定于四点式战术胸包，保持稳定的水平视角。<br>• 输出实时 3D 深度图，专用于路径导航、跌落检测及低矮障碍物规避。 |
-| **语音音频输出** | <img src="images/hardware/1%20(4).jpg" width="180" alt="耳夹式微型耳机"/> | **耳夹式开放耳道微型耳机**<br>• 开放耳道设计，私密播报 AI 语音反馈，同时不阻断环境音感知，保障视障用户出行安全。 |
-| **能源动力系统** | <img src="images/hardware/1%20(1).jpg" width="180" alt="高功率移动电源"/> | **大功率 PD 快充移动电源 (20000mAh / 165W)**<br>• 人体工学重量分配设计，确保边缘计算机在高吞吐推理负载下持续运行 6 小时以上。 |
-| **电力诱骗线缆** | <img src="images/hardware/1%20(6).jpg" width="180" alt="DC诱骗线"/> | **Type-C 转 DC 专用高电流诱骗线**<br>• 内置 PD 快充协议诱骗芯片，完美稳压移动电源输出电压以匹配 Jetson 主板标准。 |
+| 硬件模块 | 实物图参考 | 规格与作用说明 | 参考价格 |
+| :--- | :---: | :--- | :---: |
+| **第一人称视角 (POV)**<br>镜腿微型单目摄像头 | <img src="images/hardware/1%20(2).jpg" width="180" alt="镜腿微型摄像头"/> | **微型 Type-C 摄像头模组**<br>• 超轻量设计，无缝夹持于普通眼镜镜腿，视角随头部自然转动。<br>• 负责灵活交互场景（文字 OCR、红绿灯识别、特定物体辨认、通用知识问答）。 | 大约 ¥110 |
+| **边缘计算大脑** | <img src="images/hardware/1%20(3).jpg" width="180" alt="Jetson Orin Nano"/> | **NVIDIA Jetson Orin Nano Dev Kit (8GB)**<br>• 系统便携核心，安全收纳于背包/胸包中。<br>• 提供高达 40 TOPS 的 AI 算力，完美运行量化后的端侧大模型。 | 大约 ¥2599 |
+| **第三人称视角 (FOV)**<br>胸前深度摄像头 | <img src="images/hardware/1%20(7).jpg" width="180" alt="深度摄像头"/> | **Orbbec Astra Plus / 微型 HD 摄像头组件**<br>• 嵌入固定于胸包，保持稳定的水平视角。<br>• 输出实时 3D 深度图，专用于路径导航、跌落检测及低矮障碍物规避。 | 大约 ¥800 |
+| **设备承载胸包** | <img src="images/hardware/1%20(9).png" width="180" alt="战术胸包"/> | **四点式战术胸包**<br>• 稳定承载 Jetson 主板、深度摄像头及移动电源，解放双手。<br>• 保持设备重心贴近身体，适合长时间出行使用。 | 大约 ¥60 |
+| **语音音频输出** | <img src="images/hardware/1%20(4).jpg" width="180" alt="耳夹式微型耳机"/> | **耳夹式开放耳道微型耳机**<br>• 开放耳道设计，私密播报 AI 语音反馈，同时不阻断环境音感知，保障视障用户出行安全。 | 大约 ¥50 |
+| **能源动力系统** | <img src="images/hardware/1%20(1).jpg" width="180" alt="高功率移动电源"/> | **大功率 PD 快充移动电源 (20000mAh / 165W)**<br>• 人体工学重量分配设计，确保边缘计算机在高吞吐推理负载下持续运行 6 小时以上。 | 大约 ¥200 |
+| **电力诱骗线缆** | <img src="images/hardware/1%20(6).jpg" width="180" alt="DC诱骗线"/> | **Type-C 转 DC 专用高电流诱骗线**<br>• 内置 PD 快充协议诱骗芯片，完美稳压移动电源输出电压以匹配 Jetson 主板标准。 | 大约 ¥20 |
+
+> 💰 **硬件总成本约 ¥3839**（以上为 2026 年 7 月开发者实际采购参考价，人民币，仅供预算参考，实际价格随渠道和时间波动）。如果已有 Jetson 板卡，增量成本可控制在 ¥1200 以内。
 
 ### 3. 实物穿戴效果展示
 
